@@ -3,6 +3,47 @@ import torch
 import numpy as np
 import random
 
+
+def load_data(data_dir):
+    files = [file for file in os.listdir(data_dir) if file[:-4] == '.txt']
+    source = []
+    target = []
+    data = []
+    for file in files:
+        song = [line for line in file if line != '' and line != '####']
+        data.extend(song)
+        source.extend([line[:-1] for line in song[:-1]])
+        target.extend([line[:-1] for line in song[1:]])
+    pairs = list(zip(source, target))
+    return data, pairs
+
+
+class BatchGen(object):
+    """Generate endlessly the pair of current line and next line"""
+    def __init__(self, pairs, batch_size):
+        super(BatchGen, self).__init__()
+        self.pairs = pairs
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        def pad_data(data):
+            maxlen = max(map(len, data))
+            for x in data:
+                zeros = (maxlen - len(x)) * [0]
+                x += zeros
+        while True:
+            batch = random.sample(self.pairs, self.batch_size)
+            source, target = list(zip(*batch))
+            pad_data(source)
+            pad_data(target)
+            source = torch.LongTensor(np.array(source))
+            target = torch.LongTensor(np.array(target))
+            if gpu:
+                source = source.cuda()
+                target = target.cuda()
+            yield source, target
+
+
 def load_kenlm():
     global kenlm
     import kenlm
