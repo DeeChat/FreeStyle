@@ -12,7 +12,7 @@ class reprocessing(object):
         for parent, dirnames, filenames in os.walk(self.rootdir):
             for filename in filenames:
                 s = os.path.join(parent, filename)
-                if re.search(r'live', filename) is not None:
+                if re.search(r'live|\+|\(|\（', filename) is not None:
                     os.remove(s)
 
     # 去除所有时间戳
@@ -29,7 +29,7 @@ class reprocessing(object):
                         result = re.sub(al, "\n", line[i])
                         f1.write(result)
                 except IndexError:
-                    print("pass")
+                    print("passttime_delete")
                 f.close()
                 f1.close()
 
@@ -42,15 +42,14 @@ class reprocessing(object):
                 f = open(s, 'r+', encoding='utf8')
                 line = f.readlines()
                 f1 = open(s, 'w+', encoding='utf8')
-
                 try:
                     for i in range(0, len(line)):
-                        if re.search(r'找歌词|作曲|作词|编曲|监制|\@|\-|编辑人|《|www|QQ|：|歌词|by|演唱|:|－|;|\*|music|MUSIC|END|end|OH', line[i]) is not None:
+                        if re.search(r'☆|\d|﹕|>|找歌词|作曲|作词|编曲|监制|\@|\-|编辑人|《|www|QQ|：|歌词|by|演唱|:|－|;|\*|music|MUSIC|END|end|OH', line[i]) is not None:
                             del line[i]
                         else:
                             f1.write(line[i])
                 except IndexError:
-                    print("pass")
+                    print("passchar_line_delete")
                 f.close()
                 f1.close()
 #去除歌词原始文本中带相关字符的位置清空（可以继续添加）
@@ -61,13 +60,13 @@ class reprocessing(object):
                 f = open(s, 'r+', encoding='utf8')
                 line = f.readlines()
                 f1 = open(s, 'w+', encoding='utf8')
-                al = re.compile(r'，|,|；|！|\？|\(.*?\)|\.|。|…|\<.*?\>|\（.*?\）|~|!|&|\'')
+                al = re.compile(r'\,|_|#|，|,|；|！|\？|\?|\(.*?\)|\.|。|…|\<.*?\>|\（.*?\）|~|!|&|\'|’|“|”|"|～')
                 try:
                     for i in range(0, len(line)):
                         result = re.sub(al, "", line[i])
                         f1.write(result)
                 except IndexError:
-                    print("pass")
+                    print("pass_char_line_replace")
                 f.close()
                 f1.close()
 
@@ -87,7 +86,7 @@ class reprocessing(object):
                         result = re.sub(al, "", line[i])
                         f1.write(result + '\n')
                 except IndexError:
-                    print("pass")
+                    print("pass_null_delete")
                 f.close()
                 f1.close()
                 #删除空行
@@ -101,7 +100,7 @@ class reprocessing(object):
                             f2.write(data)
                             f2.write('\n')
                 except IndexError:
-                    print("pass")
+                    print("pass_null_detete")
                 f.close()
                 f2.close()
 
@@ -172,7 +171,7 @@ class reprocessing(object):
                             else:
                                 f1.write(line[i])
                 except IndexError:
-                    print("pass")
+                    print("passfirst_line")
                 f.close()
                 f1.close()
     #遇见中英混杂歌词将英文歌词位置清空
@@ -189,7 +188,7 @@ class reprocessing(object):
                         result = re.sub(al, '', line[i])
                         f1.write(result)
                 except IndexError:
-                    print("pass")
+                    print("pass_eng_empty")
                 f.close()
                 f1.close()
     #遇见中英混杂歌曲将该歌曲删除
@@ -209,21 +208,23 @@ class reprocessing(object):
                     if a == 0:
                         resultnew.append(s)
                 except IndexError:
-                    print("pass")
+                    print("pass_eng_delete")
                 f.close()
         for t in resultnew:
             os.remove(t)
+    #中文分词
+
 
 if __name__=="__main__":
-        dir = "./lyric/4 In Love"  # 指明被遍历的文件夹
-        reprocessing(dir).keywords_delete()
-        reprocessing(dir).time_delete()
-        reprocessing(dir).char_line_delete()
-        reprocessing(dir).char_line_replace()
-        reprocessing(dir).englishlyric_delete()
-        #reprocessing(dir).firstline_delete()
-        reprocessing(dir).eng_empty()
-        reprocessing(dir).null_delete()
+        dir = "./lyric/lyrics"  # 指明被遍历的文件夹
+        # reprocessing(dir).keywords_delete()
+        # reprocessing(dir).time_delete()
+        #reprocessing(dir).char_line_delete()
+        # reprocessing(dir).char_line_replace()
+        # reprocessing(dir).englishlyric_delete()
+        # reprocessing(dir).firstline_delete()
+        # reprocessing(dir).eng_empty()
+        # reprocessing(dir).null_delete()
         reprocessing(dir).null_docfile_delete()
         print(reprocessing(dir).countofdocument())
 
