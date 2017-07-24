@@ -13,15 +13,17 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from utils import to_gpu, Corpus, batchify, train_ngram_lm, get_ppl
+from utils import to_gpu, Corpus, batchify, BatchGen # train_ngram_lm, get_ppl
 from models import Seq2Seq, MLP_D, MLP_G
 
 parser = argparse.ArgumentParser(description='PyTorch ARAE for Text')
 # Path Arguments
 parser.add_argument('--data_path', type=str, required=True,
                     help='location of the data corpus')
-parser.add_argument('--kenlm_path', type=str, default='../Data/kenlm',
-                    help='path to kenlm directory')
+parser.add_argument('--dict_file', type=str, required=True,
+                    help='location of the dictionary file')
+# parser.add_argument('--kenlm_path', type=str, default='../Data/kenlm',
+#                     help='path to kenlm directory')
 parser.add_argument('--outf', type=str, default='example',
                     help='output directory name')
 
@@ -29,10 +31,10 @@ parser.add_argument('--outf', type=str, default='example',
 parser.add_argument('--vocab_size', type=int, default=11000,
                     help='cut vocabulary down to this size '
                          '(most frequently seen words in train)')
-parser.add_argument('--maxlen', type=int, default=30,
-                    help='maximum sentence length')
-parser.add_argument('--lowercase', action='store_true',
-                    help='lowercase all text')
+# parser.add_argument('--maxlen', type=int, default=30,
+#                     help='maximum sentence length')
+# parser.add_argument('--lowercase', action='store_true',
+#                     help='lowercase all text')
 
 # Model Arguments
 parser.add_argument('--emsize', type=int, default=300,
@@ -52,8 +54,8 @@ parser.add_argument('--arch_g', type=str, default='300-300',
                     help='generator architecture (MLP)')
 parser.add_argument('--arch_d', type=str, default='300-300',
                     help='critic/discriminator architecture (MLP)')
-parser.add_argument('--z_size', type=int, default=100,
-                    help='dimension of random noise z to feed into generator')
+# parser.add_argument('--z_size', type=int, default=100,
+#                     help='dimension of random noise z to feed into generator')
 parser.add_argument('--temp', type=float, default=1,
                     help='softmax temperature (lower --> more discrete)')
 parser.add_argument('--enc_grad_norm', type=bool, default=True,
@@ -137,12 +139,9 @@ if torch.cuda.is_available():
 
 # create corpus
 corpus = Corpus(args.data_path,
-                maxlen=args.maxlen,
-                vocab_size=args.vocab_size,
-                lowercase=args.lowercase)
-# dumping vocabulary
-with open('./output/{}/vocab.json'.format(args.outf), 'w') as f:
-    json.dump(corpus.dictionary.word2idx, f)
+                args.dict_file,
+                vocab_size=args.vocab_size)
+                # lowercase=args.lowercase)
 
 # save arguments
 ntokens = len(corpus.dictionary.word2idx)
@@ -155,8 +154,9 @@ with open("./output/{}/logs.txt".format(args.outf), 'w') as f:
     f.write("\n\n")
 
 eval_batch_size = 10
-test_data = batchify(corpus.test, eval_batch_size, shuffle=False)
-train_data = batchify(corpus.train, args.batch_size, shuffle=True)
+# test_data = batchify(corpus.test_data, eval_batch_size, shuffle=False)
+train_data = batchify(corpus.train_data, args.batch_size, shuffle=True)
+train_pairs = iter(BatchGen(corpus.train_pair, args.batch_size))
 
 print("Loaded data!")
 
@@ -174,8 +174,8 @@ autoencoder = Seq2Seq(emsize=args.emsize,
                       dropout=args.dropout,
                       gpu=args.cuda)
 
-gan_gen = MLP_G(ninput=args.z_size, noutput=args.nhidden, layers=args.arch_g)
-gan_disc = MLP_D(ninput=args.nhidden, noutput=1, layers=args.arch_d)
+gan_gen = MLP_G(ninput=args.nhidden, noutput=args.nhidden, layers=args.arch_g)
+gan_disc = MLP_D(ninput=2 * args.nhidden, noutput=1, layers=args.arch_d)
 
 print(autoencoder)
 print(gan_gen)
@@ -220,7 +220,7 @@ def evaluate_autoencoder(data_source, epoch):
     all_accuracies = 0
     bcnt = 0
     for i, batch in enumerate(data_source):
-        source, target, lengths = batch
+        source, target = batch
         source = to_gpu(args.cuda, Variable(source, volatile=True))
         target = to_gpu(args.cuda, Variable(target, volatile=True))
 
@@ -230,7 +230,7 @@ def evaluate_autoencoder(data_source, epoch):
         output_mask = mask.unsqueeze(1).expand(mask.size(0), ntokens)
 
         # output: batch x seq_len x ntokens
-        output = autoencoder(source, lengths, noise=True)
+        output = autoencoder(source, noise=True)
         flattened_output = output.view(-1, ntokens)
 
         masked_output = \
@@ -262,83 +262,83 @@ def evaluate_autoencoder(data_source, epoch):
     return total_loss[0] / len(data_source), all_accuracies/bcnt
 
 
-def evaluate_generator(noise, epoch):
-    gan_gen.eval()
-    autoencoder.eval()
+# def evaluate_generator(noise, epoch):
+#     gan_gen.eval()
+#     autoencoder.eval()
 
-    # generate from fixed random noise
-    fake_hidden = gan_gen(noise)
-    max_indices = \
-        autoencoder.generate(fake_hidden, args.maxlen, sample=args.sample)
+#     # generate from fixed random noise
+#     fake_hidden = gan_gen(noise)
+#     max_indices = \
+#         autoencoder.generate(fake_hidden, args.maxlen, sample=args.sample)
 
-    with open("./output/%s/%s_generated.txt" % (args.outf, epoch), "w") as f:
-        max_indices = max_indices.data.cpu().numpy()
-        for idx in max_indices:
-            # generated sentence
-            words = [corpus.dictionary.idx2word[x] for x in idx]
-            # truncate sentences to first occurrence of <eos>
-            truncated_sent = []
-            for w in words:
-                if w != '<eos>':
-                    truncated_sent.append(w)
-                else:
-                    break
-            chars = " ".join(truncated_sent)
-            f.write(chars)
-            f.write("\n")
+#     with open("./output/%s/%s_generated.txt" % (args.outf, epoch), "w") as f:
+#         max_indices = max_indices.data.cpu().numpy()
+#         for idx in max_indices:
+#             # generated sentence
+#             words = [corpus.dictionary.idx2word[x] for x in idx]
+#             # truncate sentences to first occurrence of <eos>
+#             truncated_sent = []
+#             for w in words:
+#                 if w != '<eos>':
+#                     truncated_sent.append(w)
+#                 else:
+#                     break
+#             chars = " ".join(truncated_sent)
+#             f.write(chars)
+#             f.write("\n")
 
 
-def train_lm(eval_path, save_path):
-    # generate examples
-    indices = []
-    noise = to_gpu(args.cuda, Variable(torch.ones(100, args.z_size)))
-    for i in range(1000):
-        noise.data.normal_(0, 1)
+# def train_lm(eval_path, save_path):
+#     # generate examples
+#     indices = []
+#     noise = to_gpu(args.cuda, Variable(torch.ones(100, args.z_size)))
+#     for i in range(1000):
+#         noise.data.normal_(0, 1)
 
-        fake_hidden = gan_gen(noise)
-        max_indices = autoencoder.generate(fake_hidden, args.maxlen)
-        indices.append(max_indices.data.cpu().numpy())
+#         fake_hidden = gan_gen(noise)
+#         max_indices = autoencoder.generate(fake_hidden, args.maxlen)
+#         indices.append(max_indices.data.cpu().numpy())
 
-    indices = np.concatenate(indices, axis=0)
+#     indices = np.concatenate(indices, axis=0)
 
-    # write generated sentences to text file
-    with open(save_path+".txt", "w") as f:
-        # laplacian smoothing
-        for word in corpus.dictionary.word2idx.keys():
-            f.write(word+"\n")
-        for idx in indices:
-            # generated sentence
-            words = [corpus.dictionary.idx2word[x] for x in idx]
-            # truncate sentences to first occurrence of <eos>
-            truncated_sent = []
-            for w in words:
-                if w != '<eos>':
-                    truncated_sent.append(w)
-                else:
-                    break
-            chars = " ".join(truncated_sent)
-            f.write(chars+"\n")
+#     # write generated sentences to text file
+#     with open(save_path+".txt", "w") as f:
+#         # laplacian smoothing
+#         for word in corpus.dictionary.word2idx.keys():
+#             f.write(word+"\n")
+#         for idx in indices:
+#             # generated sentence
+#             words = [corpus.dictionary.idx2word[x] for x in idx]
+#             # truncate sentences to first occurrence of <eos>
+#             truncated_sent = []
+#             for w in words:
+#                 if w != '<eos>':
+#                     truncated_sent.append(w)
+#                 else:
+#                     break
+#             chars = " ".join(truncated_sent)
+#             f.write(chars+"\n")
 
-    # train language model on generated examples
-    lm = train_ngram_lm(kenlm_path=args.kenlm_path,
-                        data_path=save_path+".txt",
-                        output_path=save_path+".arpa",
-                        N=args.N)
+#     # train language model on generated examples
+#     lm = train_ngram_lm(kenlm_path=args.kenlm_path,
+#                         data_path=save_path+".txt",
+#                         output_path=save_path+".arpa",
+#                         N=args.N)
 
-    # load sentences to evaluate on
-    with open(eval_path, 'r') as f:
-        lines = f.readlines()
-    sentences = [l.replace('\n', '') for l in lines]
-    ppl = get_ppl(lm, sentences)
+#     # load sentences to evaluate on
+#     with open(eval_path, 'r') as f:
+#         lines = f.readlines()
+#     sentences = [l.replace('\n', '') for l in lines]
+#     ppl = get_ppl(lm, sentences)
 
-    return ppl
+#     return ppl
 
 
 def train_ae(batch, total_loss_ae, start_time, i):
     autoencoder.train()
     autoencoder.zero_grad()
 
-    source, target, lengths = batch
+    source, target = batch
     source = to_gpu(args.cuda, Variable(source))
     target = to_gpu(args.cuda, Variable(target))
 
@@ -349,7 +349,7 @@ def train_ae(batch, total_loss_ae, start_time, i):
     output_mask = mask.unsqueeze(1).expand(mask.size(0), ntokens)
 
     # output: batch x seq_len x ntokens
-    output = autoencoder(source, lengths, noise=True)
+    output = autoencoder(source, noise=True)
 
     # output_size: batch_size, maxlen, self.ntokens
     flattened_output = output.view(-1, ntokens)
@@ -393,16 +393,16 @@ def train_ae(batch, total_loss_ae, start_time, i):
     return total_loss_ae, start_time
 
 
-def train_gan_g():
+def train_gan_g(batch):
     gan_gen.train()
     gan_gen.zero_grad()
 
-    noise = to_gpu(args.cuda,
-                   Variable(torch.ones(args.batch_size, args.z_size)))
-    noise.data.normal_(0, 1)
+    source, _ = batch
+    source = to_gpu(args.cuda, Variable(source))
+    source_hidden = autoencoder(source, noise=False, encode_only=True)
 
-    fake_hidden = gan_gen(noise)
-    errG = gan_disc(fake_hidden)
+    fake_hidden = gan_gen(source_hidden)
+    errG = gan_disc(source_hidden, fake_hidden)
 
     # loss / backprop
     errG.backward(one)
@@ -437,27 +437,25 @@ def train_gan_d(batch):
 
     # positive samples ----------------------------
     # generate real codes
-    source, target, lengths = batch
+    source, target = batch
     source = to_gpu(args.cuda, Variable(source))
     target = to_gpu(args.cuda, Variable(target))
 
     # batch_size x nhidden
-    real_hidden = autoencoder(source, lengths, noise=False, encode_only=True)
-    real_hidden.register_hook(grad_hook)
+    source_hidden = autoencoder(source, noise=False, encode_only=True)
+    source_hidden.register_hook(grad_hook)
+    target_hidden = autoencoder(target, noise=False, encode_only=True)
+    target_hidden.register_hook(grad_hook)
 
     # loss / backprop
-    errD_real = gan_disc(real_hidden)
+    errD_real = gan_disc(source_hidden, target_hidden)
     errD_real.backward(one)
 
     # negative samples ----------------------------
-    # generate fake codes
-    noise = to_gpu(args.cuda,
-                   Variable(torch.ones(args.batch_size, args.z_size)))
-    noise.data.normal_(0, 1)
 
     # loss / backprop
-    fake_hidden = gan_gen(noise)
-    errD_fake = gan_disc(fake_hidden.detach())
+    fake_hidden = gan_gen(source_hidden)
+    errD_fake = gan_disc(source_hidden.detach(), fake_hidden.detach())
     errD_fake.backward(mone)
 
     # `clip_grad_norm` to prvent exploding gradient problem in RNNs / LSTMs
@@ -481,9 +479,6 @@ else:
     gan_schedule = []
 niter_gan = 1
 
-fixed_noise = to_gpu(args.cuda,
-                     Variable(torch.ones(args.batch_size, args.z_size)))
-fixed_noise.data.normal_(0, 1)
 one = to_gpu(args.cuda, torch.FloatTensor([1]))
 mone = one * -1
 
@@ -523,11 +518,11 @@ for epoch in range(1, args.epochs+1):
             for i in range(args.niters_gan_d):
                 # feed a seen sample within this epoch; good for early training
                 errD, errD_real, errD_fake = \
-                    train_gan_d(train_data[random.randint(0, len(train_data)-1)])
+                    train_gan_d(next(train_pairs))
 
             # train generator
             for i in range(args.niters_gan_g):
-                errG = train_gan_g()
+                errG = train_gan_g(next(train_pairs))
 
         niter_global += 1
         if niter_global % 100 == 0:
@@ -547,88 +542,88 @@ for epoch in range(1, args.epochs+1):
             autoencoder.noise_radius = \
                 autoencoder.noise_radius*args.noise_anneal
 
-            if niter_global % 3000 == 0:
-                evaluate_generator(fixed_noise, "epoch{}_step{}".
-                                   format(epoch, niter_global))
+            # if niter_global % 3000 == 0:
+            #     evaluate_generator(fixed_noise, "epoch{}_step{}".
+            #                        format(epoch, niter_global))
 
-                # evaluate with lm
-                if not args.no_earlystopping and epoch > args.min_epochs:
-                    ppl = train_lm(eval_path=os.path.join(args.data_path,
-                                                          "test.txt"),
-                                   save_path="output/{}/"
-                                             "epoch{}_step{}_lm_generations".
-                                             format(args.outf, epoch,
-                                                    niter_global))
-                    print("Perplexity {}".format(ppl))
-                    all_ppl.append(ppl)
-                    print(all_ppl)
-                    with open("./output/{}/logs.txt".
-                              format(args.outf), 'a') as f:
-                        f.write("\n\nPerplexity {}\n".format(ppl))
-                        f.write(str(all_ppl)+"\n\n")
-                    if best_ppl is None or ppl < best_ppl:
-                        impatience = 0
-                        best_ppl = ppl
-                        print("New best ppl {}\n".format(best_ppl))
-                        with open("./output/{}/logs.txt".
-                                  format(args.outf), 'a') as f:
-                            f.write("New best ppl {}\n".format(best_ppl))
-                        save_model()
-                    else:
-                        impatience += 1
-                        # end training
-                        if impatience > args.patience:
-                            print("Ending training")
-                            with open("./output/{}/logs.txt".
-                                      format(args.outf), 'a') as f:
-                                f.write("\nEnding Training\n")
-                            sys.exit()
+            #     # evaluate with lm
+            #     if not args.no_earlystopping and epoch > args.min_epochs:
+            #         ppl = train_lm(eval_path=os.path.join(args.data_path,
+            #                                               "test.txt"),
+            #                        save_path="output/{}/"
+            #                                  "epoch{}_step{}_lm_generations".
+            #                                  format(args.outf, epoch,
+            #                                         niter_global))
+            #         print("Perplexity {}".format(ppl))
+            #         all_ppl.append(ppl)
+            #         print(all_ppl)
+            #         with open("./output/{}/logs.txt".
+            #                   format(args.outf), 'a') as f:
+            #             f.write("\n\nPerplexity {}\n".format(ppl))
+            #             f.write(str(all_ppl)+"\n\n")
+            #         if best_ppl is None or ppl < best_ppl:
+            #             impatience = 0
+            #             best_ppl = ppl
+            #             print("New best ppl {}\n".format(best_ppl))
+            #             with open("./output/{}/logs.txt".
+            #                       format(args.outf), 'a') as f:
+            #                 f.write("New best ppl {}\n".format(best_ppl))
+            #             save_model()
+            #         else:
+            #             impatience += 1
+            #             # end training
+            #             if impatience > args.patience:
+            #                 print("Ending training")
+            #                 with open("./output/{}/logs.txt".
+            #                           format(args.outf), 'a') as f:
+            #                     f.write("\nEnding Training\n")
+            #                 sys.exit()
 
     # end of epoch ----------------------------
     # evaluation
-    test_loss, accuracy = evaluate_autoencoder(test_data, epoch)
-    print('-' * 89)
-    print('| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} | '
-          'test ppl {:5.2f} | acc {:3.3f}'.
-          format(epoch, (time.time() - epoch_start_time),
-                 test_loss, math.exp(test_loss), accuracy))
-    print('-' * 89)
+    # test_loss, accuracy = evaluate_autoencoder(test_data, epoch)
+    # print('-' * 89)
+    # print('| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} | '
+    #       'test ppl {:5.2f} | acc {:3.3f}'.
+    #       format(epoch, (time.time() - epoch_start_time),
+    #              test_loss, math.exp(test_loss), accuracy))
+    # print('-' * 89)
 
-    with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
-        f.write('-' * 89)
-        f.write('\n| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} |'
-                ' test ppl {:5.2f} | acc {:3.3f}\n'.
-                format(epoch, (time.time() - epoch_start_time),
-                       test_loss, math.exp(test_loss), accuracy))
-        f.write('-' * 89)
-        f.write('\n')
+    # with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
+    #     f.write('-' * 89)
+    #     f.write('\n| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} |'
+    #             ' test ppl {:5.2f} | acc {:3.3f}\n'.
+    #             format(epoch, (time.time() - epoch_start_time),
+    #                    test_loss, math.exp(test_loss), accuracy))
+    #     f.write('-' * 89)
+    #     f.write('\n')
 
-    evaluate_generator(fixed_noise, "end_of_epoch_{}".format(epoch))
-    if not args.no_earlystopping and epoch >= args.min_epochs:
-        ppl = train_lm(eval_path=os.path.join(args.data_path, "test.txt"),
-                       save_path="./output/{}/end_of_epoch{}_lm_generations".
-                                 format(args.outf, epoch))
-        print("Perplexity {}".format(ppl))
-        all_ppl.append(ppl)
-        print(all_ppl)
-        with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
-            f.write("\n\nPerplexity {}\n".format(ppl))
-            f.write(str(all_ppl)+"\n\n")
-        if best_ppl is None or ppl < best_ppl:
-            impatience = 0
-            best_ppl = ppl
-            print("New best ppl {}\n".format(best_ppl))
-            with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
-                f.write("New best ppl {}\n".format(best_ppl))
-            save_model()
-        else:
-            impatience += 1
-            # end training
-            if impatience > args.patience:
-                print("Ending training")
-                with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
-                    f.write("\nEnding Training\n")
-                sys.exit()
+    # evaluate_generator(fixed_noise, "end_of_epoch_{}".format(epoch))
+    # if not args.no_earlystopping and epoch >= args.min_epochs:
+    #     ppl = train_lm(eval_path=os.path.join(args.data_path, "test.txt"),
+    #                    save_path="./output/{}/end_of_epoch{}_lm_generations".
+    #                              format(args.outf, epoch))
+    #     print("Perplexity {}".format(ppl))
+    #     all_ppl.append(ppl)
+    #     print(all_ppl)
+    #     with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
+    #         f.write("\n\nPerplexity {}\n".format(ppl))
+    #         f.write(str(all_ppl)+"\n\n")
+    #     if best_ppl is None or ppl < best_ppl:
+    #         impatience = 0
+    #         best_ppl = ppl
+    #         print("New best ppl {}\n".format(best_ppl))
+    #         with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
+    #             f.write("New best ppl {}\n".format(best_ppl))
+    #         save_model()
+    #     else:
+    #         impatience += 1
+    #         # end training
+    #         if impatience > args.patience:
+    #             print("Ending training")
+    #             with open("./output/{}/logs.txt".format(args.outf), 'a') as f:
+    #                 f.write("\nEnding Training\n")
+    #             sys.exit()
 
     # shuffle between epochs
-    train_data = batchify(corpus.train, args.batch_size, shuffle=True)
+    train_data = batchify(corpus.train_data, args.batch_size, shuffle=True)

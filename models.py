@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from utils import to_gpu
 import json
@@ -40,7 +39,8 @@ class MLP_D(nn.Module):
 
         self.init_weights()
 
-    def forward(self, x):
+    def forward(self, source, target):
+        x = torch.cat([source, target], dim=1)
         for i, layer in enumerate(self.layers):
             x = layer(x)
         x = torch.mean(x)
@@ -168,10 +168,10 @@ class Seq2Seq(nn.Module):
         self.grad_norm = norm.detach().data.mean()
         return grad
 
-    def forward(self, indices, lengths, noise, encode_only=False):
+    def forward(self, indices, noise, encode_only=False):
         batch_size, maxlen = indices.size()
 
-        hidden = self.encode(indices, lengths, noise)
+        hidden = self.encode(indices, noise)
 
         if encode_only:
             return hidden
@@ -180,18 +180,15 @@ class Seq2Seq(nn.Module):
             hidden.register_hook(self.store_grad_norm)
 
         decoded = self.decode(hidden, batch_size, maxlen,
-                              indices=indices, lengths=lengths)
+                              indices=indices)
 
         return decoded
 
-    def encode(self, indices, lengths, noise):
+    def encode(self, indices, noise):
         embeddings = self.embedding(indices)
-        packed_embeddings = pack_padded_sequence(input=embeddings,
-                                                 lengths=lengths,
-                                                 batch_first=True)
 
         # Encode
-        packed_output, state = self.encoder(packed_embeddings)
+        packed_output, state = self.encoder(embeddings)
 
         hidden, cell = state
         # batch_size x nhidden
@@ -208,7 +205,7 @@ class Seq2Seq(nn.Module):
 
         return hidden
 
-    def decode(self, hidden, batch_size, maxlen, indices=None, lengths=None):
+    def decode(self, hidden, batch_size, maxlen, indices=None):
         # batch x hidden
         all_hidden = hidden.unsqueeze(1).repeat(1, maxlen, 1)
 
@@ -220,12 +217,8 @@ class Seq2Seq(nn.Module):
 
         embeddings = self.embedding_decoder(indices)
         augmented_embeddings = torch.cat([embeddings, all_hidden], 2)
-        packed_embeddings = pack_padded_sequence(input=augmented_embeddings,
-                                                 lengths=lengths,
-                                                 batch_first=True)
 
-        packed_output, state = self.decoder(packed_embeddings, state)
-        output, lengths = pad_packed_sequence(packed_output, batch_first=True)
+        output, state = self.decoder(augmented_embeddings, state)
 
         # reshape to batch_size*maxlen x nhidden before linear over vocab
         decoded = self.linear(output.contiguous().view(-1, self.nhidden))
@@ -302,24 +295,17 @@ def load_models(load_path):
     return model_args, idx2word, autoencoder, gan_gen, gan_disc
 
 
-def generate(autoencoder, gan_gen, z, vocab, sample, maxlen):
+def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
     """
-    Assume noise is batch_size x z_size
+    Assume inp is batch_size x max_sen_len
     """
-    if type(z) == Variable:
-        noise = z
-    elif type(z) == torch.FloatTensor or type(z) == torch.cuda.FloatTensor:
-        noise = Variable(z, volatile=True)
-    elif type(z) == np.ndarray:
-        noise = Variable(torch.from_numpy(z).float(), volatile=True)
-    else:
-        raise ValueError("Unsupported input type (noise): {}".format(type(z)))
+    assert type(inp) == torch.LongTensor or type(inp) == torch.cuda.LongTensor
 
     gan_gen.eval()
     autoencoder.eval()
 
     # generate from random noise
-    fake_hidden = gan_gen(noise)
+    fake_hidden = gan_gen(autoencoder(inp, noise=False, encode_only=True))
     max_indices = autoencoder.generate(hidden=fake_hidden,
                                        maxlen=maxlen,
                                        sample=sample)
