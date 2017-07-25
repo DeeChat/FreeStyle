@@ -4,7 +4,6 @@ import time
 import math
 import numpy as np
 import random
-import sys
 import json
 
 import torch
@@ -13,7 +12,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from utils import to_gpu, Corpus, batchify, BatchGen # train_ngram_lm, get_ppl
+from utils import to_gpu, Corpus, batchify, BatchGen  # train_ngram_lm, get_ppl
 from models import Seq2Seq, MLP_D, MLP_G
 
 parser = argparse.ArgumentParser(description='PyTorch ARAE for Text')
@@ -22,6 +21,8 @@ parser.add_argument('--data_path', type=str, required=True,
                     help='location of the data corpus')
 parser.add_argument('--dict_file', type=str, required=True,
                     help='location of the dictionary file')
+parser.add_argument('--subset', type=int, default=0,
+                    help='use a small amount of data for quick debugging.')
 # parser.add_argument('--kenlm_path', type=str, default='../Data/kenlm',
 #                     help='path to kenlm directory')
 parser.add_argument('--outf', type=str, default='example',
@@ -140,8 +141,11 @@ if torch.cuda.is_available():
 # create corpus
 corpus = Corpus(args.data_path,
                 args.dict_file,
-                vocab_size=args.vocab_size)
-                # lowercase=args.lowercase)
+                vocab_size=args.vocab_size,
+                subset=args.subset)
+# dumping vocabulary
+with open('./output/{}/vocab.json'.format(args.outf), 'w') as f:
+    json.dump(corpus.dictionary.word2idx, f)
 
 # save arguments
 ntokens = len(corpus.dictionary.word2idx)
@@ -155,8 +159,8 @@ with open("./output/{}/logs.txt".format(args.outf), 'w') as f:
 
 eval_batch_size = 10
 # test_data = batchify(corpus.test_data, eval_batch_size, shuffle=False)
-train_data = batchify(corpus.train_data, args.batch_size, shuffle=True)
-train_pairs = iter(BatchGen(corpus.train_pair, args.batch_size))
+train_data = batchify(corpus.data, args.batch_size, shuffle=True)
+train_pairs = BatchGen(corpus.pairs, args.batch_size)
 
 print("Loaded data!")
 
@@ -202,14 +206,22 @@ if args.cuda:
 ###############################################################################
 
 
-def save_model():
+def save_model(epoch=None):
     print("Saving models")
-    with open('./output/{}/autoencoder_model.pt'.format(args.outf), 'wb') as f:
-        torch.save(autoencoder.state_dict(), f)
-    with open('./output/{}/gan_gen_model.pt'.format(args.outf), 'wb') as f:
-        torch.save(gan_gen.state_dict(), f)
-    with open('./output/{}/gan_disc_model.pt'.format(args.outf), 'wb') as f:
-        torch.save(gan_disc.state_dict(), f)
+    if epoch is None:
+        with open('./output/{}/autoencoder_model.pt'.format(args.outf), 'wb') as f:
+            torch.save(autoencoder.state_dict(), f)
+        with open('./output/{}/gan_gen_model.pt'.format(args.outf), 'wb') as f:
+            torch.save(gan_gen.state_dict(), f)
+        with open('./output/{}/gan_disc_model.pt'.format(args.outf), 'wb') as f:
+            torch.save(gan_disc.state_dict(), f)
+    else:
+        with open('./output/{}/autoencoder_model_{}.pt'.format(args.outf, epoch), 'wb') as f:
+            torch.save(autoencoder.state_dict(), f)
+        with open('./output/{}/gan_gen_model_{}.pt'.format(args.outf, epoch), 'wb') as f:
+            torch.save(gan_gen.state_dict(), f)
+        with open('./output/{}/gan_disc_model_{}.pt'.format(args.outf, epoch), 'wb') as f:
+            torch.save(gan_disc.state_dict(), f)
 
 
 def evaluate_autoencoder(data_source, epoch):
@@ -626,4 +638,5 @@ for epoch in range(1, args.epochs+1):
     #             sys.exit()
 
     # shuffle between epochs
-    train_data = batchify(corpus.train_data, args.batch_size, shuffle=True)
+    train_data = batchify(corpus.data, args.batch_size, shuffle=True)
+    save_model(epoch)

@@ -11,25 +11,23 @@ class BatchGen(object):
         self.pairs = pairs
         self.batch_size = batch_size
 
+    def pad_data(self, data):
+        maxlen = max(map(len, data))
+        for x in data:
+            zeros = (maxlen - len(x)) * [0]
+            x += zeros
+
     def __iter__(self):
-        def pad_data(data):
-            maxlen = max(map(len, data))
-            for x in data:
-                zeros = (maxlen - len(x)) * [0]
-                x += zeros
-        while True:
-            batch = random.sample(self.pairs, self.batch_size)
-            source, target = list(zip(*batch))
-            pad_data(source)
-            pad_data(target)
-            source = torch.LongTensor(np.array(source))
-            target = torch.LongTensor(np.array(target))
-            yield source, target
+        return self
 
-
-def load_kenlm():
-    global kenlm
-    import kenlm
+    def __next__(self):
+        batch = random.sample(self.pairs, self.batch_size)
+        source, target = list(zip(*batch))
+        self.pad_data(source)
+        self.pad_data(target)
+        source = torch.LongTensor(np.array(source))
+        target = torch.LongTensor(np.array(target))
+        return source, target
 
 
 def to_gpu(gpu, var):
@@ -76,17 +74,16 @@ class Dictionary(object):
 
 
 class Corpus(object):
-    def __init__(self, data_path, dict_file, vocab_size=1e6):
+    def __init__(self, data_path, dict_file, vocab_size=1e6, subset=None):
         self.dictionary = Dictionary(dict_file, vocab_size)
         self.vocab_size = vocab_size
-        # self.train_path = os.path.join(data_path, 'train')
-        # self.test_path = os.path.join(data_path, 'test')
 
-        self.train_data, self.train_pair = self.load_data(data_path)
-        # self.test_data, self.test_pair = self.load_data(self.test_path)
+        self.data, self.pairs = self.load_data(data_path, subset)
 
-    def load_data(self, data_dir):
+    def load_data(self, data_dir, subset):
         files = glob('{}/*/*.lrc'.format(data_dir))
+        if subset:
+            files = random.sample(files, subset)
         source = []
         target = []
         data = []
@@ -141,6 +138,11 @@ def batchify(data, bsz, shuffle=False, gpu=False):
         batches.append((source, target))
 
     return batches
+
+
+# def load_kenlm():
+#     global kenlm
+#     import kenlm
 
 
 # def train_ngram_lm(kenlm_path, data_path, output_path, N):

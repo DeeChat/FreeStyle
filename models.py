@@ -304,7 +304,7 @@ def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
     gan_gen.eval()
     autoencoder.eval()
 
-    # generate from random noise
+    # generate from the previous line
     fake_hidden = gan_gen(autoencoder(inp, noise=False, encode_only=True))
     max_indices = autoencoder.generate(hidden=fake_hidden,
                                        maxlen=maxlen,
