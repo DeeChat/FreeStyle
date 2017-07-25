@@ -14,15 +14,18 @@ This project is based on the pytorch version of [ARAE](https://github.com/jakezh
 
 完整运行：
 ```bash
-python train.py --data_path data/lyrics --dict_file data/dictionary --enc_grad_norm "" --no_earlystopping --batch_size 32
+python train.py --data_path data/lyrics --dict_file data/dictionary --enc_grad_norm "" --no_earlystopping --batch_size 32 --cuda
 ```
 
 自动抽取数据子集（以下随机抽取1000首歌）：
 ```bash
-python train.py --data_path data/lyrics --dict_file data/dictionary --enc_grad_norm "" --no_earlystopping --batch_size 32 --subset 1000
+python train.py --data_path data/lyrics --dict_file data/dictionary --enc_grad_norm "" --no_earlystopping --batch_size 32 --cuda --subset 1000
 ```
 
 训练完成后从模型生成文本：
 ```bash
 python generate.py --model_path output/example --data_path data/lyrics --dict_file data/dictionary
 ```
+
+如果在Windows下运行，由于Windows默认编码为gbk，需要把所有的`open(file)`换成`codecs.open(file, 'r', 'utf-8')`。
+

@@ -25,8 +25,8 @@ class BatchGen(object):
         source, target = list(zip(*batch))
         self.pad_data(source)
         self.pad_data(target)
-        source = torch.LongTensor(np.array(source))
-        target = torch.LongTensor(np.array(target))
+        source = torch.LongTensor(source)
+        target = torch.LongTensor(target)
         return source, target
 
 
@@ -132,8 +132,8 @@ def batchify(data, bsz, shuffle=False, gpu=False):
             x += zeros
             y += zeros
 
-        source = torch.LongTensor(np.array(source))
-        target = torch.LongTensor(np.array(target)).view(-1)
+        source = torch.LongTensor(source)
+        target = torch.LongTensor(target).view(-1)
 
         batches.append((source, target))
 
