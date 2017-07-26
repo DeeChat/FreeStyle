@@ -5,7 +5,7 @@ import random
 import torch
 from torch.autograd import Variable
 
-from models import load_models, generate
+from models import load_models, generate, decode_idx
 from utils import Corpus, BatchGen
 
 ###############################################################################
@@ -70,19 +70,22 @@ def main(args):
     corpus = Corpus(args.data_path,
                     args.dict_file,
                     vocab_size=len(idx2word),
-                    subset=args.nSentence * 3)
+                    subset=args.ngenerations * 3)
 
-    # TODO: 然后变成GPU向量输入generate
-    source, _ = next(BatchGen(corpus.paris, args.nSentence))
-
+    source, _ = next(BatchGen(corpus.pairs, args.ngenerations))
+    prev_sent = [decode_idx(corpus.dictionary, sent) for sent in source.tolist()]
+    source = Variable(source, volatile=True)
     sentences = generate(autoencoder, gan_gen, inp=source,
                          vocab=idx2word, sample=args.sample,
-                         maxlen=model_args['maxlen'])
+                         maxlen=args.maxlen)
 
+    
     if not args.noprint:
         print("\nSentence generations:\n")
-        for sent in sentences:
-            print(sent)
+        for prev, sent in zip(prev_sent, sentences):
+            print(prev)
+            print("    ", sent)
+            print("")
     with open(args.outf, "w") as f:
         f.write("Sentence generations:\n\n")
         for sent in sentences:
@@ -134,6 +137,7 @@ if __name__ == "__main__":
                         help='filename and path to write to')
     parser.add_argument('--noprint', action='store_true',
                         help='prevents examples from printing')
+    parser.add_argument('--maxlen', type=int, default=15)
     parser.add_argument('--sample', action='store_true',
                         help='sample when decoding for generation')
     parser.add_argument('--seed', type=int, default=1111,

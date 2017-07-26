@@ -6,7 +6,6 @@ from torch.autograd import Variable
 from utils import to_gpu
 import json
 import os
-import numpy as np
 
 
 class MLP_D(nn.Module):
@@ -277,10 +276,10 @@ def load_models(load_path):
                           ntokens=model_args['ntokens'],
                           nlayers=model_args['nlayers'],
                           hidden_init=model_args['hidden_init'])
-    gan_gen = MLP_G(ninput=model_args['z_size'],
+    gan_gen = MLP_G(ninput=model_args['nhidden'],
                     noutput=model_args['nhidden'],
                     layers=model_args['arch_g'])
-    gan_disc = MLP_D(ninput=model_args['nhidden'],
+    gan_disc = MLP_D(ninput=2 * model_args['nhidden'],
                      noutput=1,
                      layers=model_args['arch_d'])
 
@@ -295,12 +294,24 @@ def load_models(load_path):
     return model_args, idx2word, autoencoder, gan_gen, gan_disc
 
 
+def decode_idx(vocab, idx):
+    # generated sentence
+    words = [vocab[x] for x in idx]
+    # truncate sentences to first occurrence of <eos>
+    truncated_sent = []
+    for w in words:
+        if w != '<eos>':
+            truncated_sent.append(w)
+        else:
+            break
+    sent = " ".join(truncated_sent)
+    return sent
+
+
 def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
     """
     Assume inp is batch_size x max_sen_len
     """
-    assert type(inp) == torch.LongTensor or type(inp) == torch.cuda.LongTensor
-
     gan_gen.eval()
     autoencoder.eval()
 
@@ -324,5 +335,4 @@ def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
                 break
         sent = " ".join(truncated_sent)
         sentences.append(sent)
-
     return sentences
