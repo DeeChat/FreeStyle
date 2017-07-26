@@ -51,5 +51,5 @@ if __name__ =='__main__':
 	min_sentence_length = 5
 	max_sentence_length = 15
 	
-	#reshape_lyric(input_path,output_path,length)
+	reshape_lyric(input_path,output_path,length)
 	filter_lyric(filter_input_path,filter_output_path,dictionary_num,min_sentence_length,max_sentence_length)
