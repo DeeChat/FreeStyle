@@ -18,23 +18,24 @@ class MLP_D(nn.Module):
         layer_sizes = [ninput] + [int(x) for x in layers.split('-')]
         self.layers = []
 
-        for i in range(len(layer_sizes)-1):
-            layer = nn.Linear(layer_sizes[i], layer_sizes[i+1])
+        for i in range(len(layer_sizes) - 1):
+            layer = nn.Linear(layer_sizes[i], layer_sizes[i + 1])
             self.layers.append(layer)
-            self.add_module("layer"+str(i+1), layer)
+            self.add_module("layer" + str(i + 1), layer)
 
             # No batch normalization after first layer
             if i != 0:
-                bn = nn.BatchNorm1d(layer_sizes[i+1], eps=1e-05, momentum=0.1)
+                bn = nn.BatchNorm1d(
+                    layer_sizes[i + 1], eps=1e-05, momentum=0.1)
                 self.layers.append(bn)
-                self.add_module("bn"+str(i+1), bn)
+                self.add_module("bn" + str(i + 1), bn)
 
             self.layers.append(activation)
-            self.add_module("activation"+str(i+1), activation)
+            self.add_module("activation" + str(i + 1), activation)
 
         layer = nn.Linear(layer_sizes[-1], noutput)
         self.layers.append(layer)
-        self.add_module("layer"+str(len(self.layers)), layer)
+        self.add_module("layer" + str(len(self.layers)), layer)
 
         self.init_weights()
 
@@ -65,21 +66,21 @@ class MLP_G(nn.Module):
         layer_sizes = [ninput] + [int(x) for x in layers.split('-')]
         self.layers = []
 
-        for i in range(len(layer_sizes)-1):
-            layer = nn.Linear(layer_sizes[i], layer_sizes[i+1])
+        for i in range(len(layer_sizes) - 1):
+            layer = nn.Linear(layer_sizes[i], layer_sizes[i + 1])
             self.layers.append(layer)
-            self.add_module("layer"+str(i+1), layer)
+            self.add_module("layer" + str(i + 1), layer)
 
-            bn = nn.BatchNorm1d(layer_sizes[i+1], eps=1e-05, momentum=0.1)
+            bn = nn.BatchNorm1d(layer_sizes[i + 1], eps=1e-05, momentum=0.1)
             self.layers.append(bn)
-            self.add_module("bn"+str(i+1), bn)
+            self.add_module("bn" + str(i + 1), bn)
 
             self.layers.append(activation)
-            self.add_module("activation"+str(i+1), activation)
+            self.add_module("activation" + str(i + 1), activation)
 
         layer = nn.Linear(layer_sizes[-1], noutput)
         self.layers.append(layer)
-        self.add_module("layer"+str(len(self.layers)), layer)
+        self.add_module("layer" + str(len(self.layers)), layer)
 
         self.init_weights()
 
@@ -124,7 +125,7 @@ class Seq2Seq(nn.Module):
                                dropout=dropout,
                                batch_first=True)
 
-        decoder_input_size = emsize+nhidden
+        decoder_input_size = emsize + nhidden
         self.decoder = nn.LSTM(input_size=decoder_input_size,
                                hidden_size=nhidden,
                                num_layers=1,
@@ -253,7 +254,7 @@ class Seq2Seq(nn.Module):
                 vals, indices = torch.max(overvocab, 1)
             else:
                 # sampling
-                probs = F.softmax(overvocab/temp)
+                probs = F.softmax(overvocab / temp)
                 indices = torch.multinomial(probs, 1)
 
             all_indices.append(indices)
@@ -283,7 +284,7 @@ def load_models(load_path):
                      noutput=1,
                      layers=model_args['arch_d'])
 
-    print('Loading models from'+load_path)
+    print('Loading models from' + load_path)
     ae_path = os.path.join(load_path, "autoencoder_model.pt")
     gen_path = os.path.join(load_path, "gan_gen_model.pt")
     disc_path = os.path.join(load_path, "gan_disc_model.pt")
@@ -300,11 +301,13 @@ def decode_idx(vocab, idx):
     # truncate sentences to first occurrence of <eos>
     truncated_sent = []
     for w in words:
+        if w == '<sos>' or w == '<pad>':
+            continue
         if w != '<eos>':
             truncated_sent.append(w)
         else:
             break
-    sent = " ".join(truncated_sent)
+    sent = "".join(truncated_sent)
     return sent
 
 
@@ -333,6 +336,6 @@ def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
                 truncated_sent.append(w)
             else:
                 break
-        sent = " ".join(truncated_sent)
+        sent = "".join(truncated_sent)
         sentences.append(sent)
     return sentences
