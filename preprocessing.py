@@ -9,6 +9,12 @@ class reprocessing(object):
         self.rootdir = rootdir
     # 去除题目中所有包括Live等关键字文件（可以添加）
     def keywords_delete(self):
+        '''
+        	Dedupilicate lyric files, reserve the original version
+        	while discarding other versions (live,粤语,etc..)
+
+        	path: path of folder to dedupulicate
+        	'''
         for parent, dirnames, filenames in os.walk(self.rootdir):
             for filename in filenames:
                 s = os.path.join(parent, filename)
@@ -44,7 +50,7 @@ class reprocessing(object):
                 f1 = open(s, 'w+', encoding='utf8')
                 try:
                     for i in range(0, len(line)):
-                        if re.search(r'☆|\d|﹕|>|找歌词|作曲|作词|编曲|监制|\@|\-|编辑人|《|www|QQ|：|歌词|by|演唱|:|－|;|\*|music|MUSIC|END|end|OH', line[i]) is not None:
+                        if re.search(r'丶|∶|☆|\d|﹕|>|找歌词|作曲|作词|编曲|监制|\@|\-|编辑人|《|www|QQ|：|歌词|by|演唱|:|－|;|\*|music|MUSIC|END|end|OH|\］|<|\［', line[i]) is not None:
                             del line[i]
                         else:
                             f1.write(line[i])
@@ -60,7 +66,7 @@ class reprocessing(object):
                 f = open(s, 'r+', encoding='utf8')
                 line = f.readlines()
                 f1 = open(s, 'w+', encoding='utf8')
-                al = re.compile(r'\,|_|#|，|,|；|！|\？|\?|\(.*?\)|\.|。|…|\<.*?\>|\（.*?\）|~|!|&|\'|’|“|”|"|～')
+                al = re.compile(r'〈|ˉ|\｜|­|•|﻿|\．|\/|·|、|�|\,|_|#|，|,|；|！|\？|\?|\(.*?\)|\.|。|…|\<.*?\>|\（.*?\）|~|!|&|\'|’|“|”|"|～|\）|\)')
                 try:
                     for i in range(0, len(line)):
                         result = re.sub(al, "", line[i])
@@ -119,21 +125,22 @@ class reprocessing(object):
             :param uchar:
             :return:
             '''
-            for ch in uchar:
-                if uchar >= u'\u4e00' and uchar <= u'\u9fa5':
-                    return True
-            return False
+            varible=0
+            for element in uchar.strip('\n'):
+                if element < u'\u4e00' or element > u'\u9fa5':
+                    varible=1
+                    break
+            return varible
         result = []
         for parent, dirnames, filenames in os.walk(self.rootdir):
             for filename in filenames:
-                print(filename)
                 s = os.path.join(parent, filename)
                 f = open(s, 'r+', encoding='utf8')
                 line = f.readlines()
-                a = False
+                a = 0
                 for i in range(0, len(line)):
-                    a = (a or is_chinese(line[i]))
-                if a == False:
+                    a =a+ is_chinese(line[i])
+                if a > 0:
                     result.append(s)
                 f.close()
         for t in result:
@@ -216,15 +223,15 @@ class reprocessing(object):
 
 
 if __name__=="__main__":
-        dir = "./lyric/lyrics"  # 指明被遍历的文件夹
+        dir = "./lyric/new"  # 指明被遍历的文件夹
         # reprocessing(dir).keywords_delete()
         # reprocessing(dir).time_delete()
-        #reprocessing(dir).char_line_delete()
+        # reprocessing(dir).char_line_delete()
         # reprocessing(dir).char_line_replace()
-        # reprocessing(dir).englishlyric_delete()
-        # reprocessing(dir).firstline_delete()
-        # reprocessing(dir).eng_empty()
-        # reprocessing(dir).null_delete()
-        reprocessing(dir).null_docfile_delete()
-        print(reprocessing(dir).countofdocument())
+        reprocessing(dir).englishlyric_delete()
+        # # reprocessing(dir).firstline_delete()
+        # # reprocessing(dir).eng_empty()
+        # # reprocessing(dir).null_delete()
+        # reprocessing(dir).null_docfile_delete()
+        # print(reprocessing(dir).countofdocument())
 
