@@ -1,5 +1,5 @@
+import json
 import torch
-import numpy as np
 import random
 from glob import glob
 
@@ -45,15 +45,15 @@ class Dictionary(object):
                     continue
                 words.append(line.strip().split(',')[0])
         self.word2idx = {}
-        self.pad = '<pad>'
-        self.sos = '<sos>'
-        self.eos = '<eos>'
-        self.oov = '<oov>'
+        self.pad = 0
+        self.sos = 1
+        self.eos = 2
+        self.oov = 3
         self.offset = 4
-        self.word2idx['<pad>'] = 0
-        self.word2idx['<sos>'] = 1
-        self.word2idx['<eos>'] = 2
-        self.word2idx['<oov>'] = 3
+        self.word2idx['<pad>'] = self.pad
+        self.word2idx['<sos>'] = self.sos
+        self.word2idx['<eos>'] = self.eos
+        self.word2idx['<oov>'] = self.oov
         for idx, word in enumerate(words[:vocab_size]):
             self.word2idx[word] = idx + 4
         self.idx2word = {v: k for k, v in self.word2idx.items()}
@@ -80,35 +80,27 @@ class Corpus(object):
 
         self.data, self.pairs = self.load_data(data_path, subset)
 
-    def load_data(self, data_dir, subset):
-        files = glob('{}/*/*.lrc'.format(data_dir))
-        if subset:
-            files = random.sample(files, subset)
-        source = []
-        target = []
-        data = []
-        for file in files:
-            with open(file) as f:
-                song = []
-                for line in f:
-                    words = []
-                    if line == '':
-                        continue
-                    for x in line.strip().split(','):
-                        x = int(x)
-                        if x >= self.vocab_size:
-                            x = self.dictionary[self.dictionary.oov]
-                        else:
-                            x += self.dictionary.offset
-                        words.append(x)
-                    words = [self.dictionary[self.dictionary.sos]] + words
-                    words += [self.dictionary[self.dictionary.eos]]
-                    song.append(words)
-                data.extend(song)
-            source.extend([line[:-1] for line in song[:-1]])
-            target.extend([line[:-1] for line in song[1:]])
-        pairs = list(zip(source, target))
-        return data, pairs
+    def load_data_new(self, file, subset):
+        with open(file) as f:
+            raw = json.load(f)
+        self.raw = raw
+
+    def gen_data(self):
+        for chunk in self.raw:
+            for line in chunk:
+                yield [self.dictionary.sos] + \
+                      [self.dictionary[w] for w in line] + \
+                      [self.dictionary.eos]
+
+    def gen_chunks(self, size):
+        for chunk in self.raw:
+            if len(chunk) > size:
+                chunk = [[self.dictionary.sos] +
+                         [self.dictionary[w] for w in line] +
+                         [self.dictionary.eos]
+                         for line in chunk]
+                for i in range(len(chunk) - size + 1):
+                    yield chunk[i: i + size]
 
 
 def batchify(data, bsz, shuffle=False, gpu=False):
