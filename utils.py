@@ -45,15 +45,15 @@ class Dictionary(object):
                     continue
                 words.append(line.strip().split(',')[0])
         self.word2idx = {}
-        self.pad = 0
-        self.sos = 1
-        self.eos = 2
-        self.oov = 3
+        self.pad = '<pad>'
+        self.sos = '<sos>'
+        self.eos = '<eos>'
+        self.oov = '<oov>'
         self.offset = 4
-        self.word2idx['<pad>'] = self.pad
-        self.word2idx['<sos>'] = self.sos
-        self.word2idx['<eos>'] = self.eos
-        self.word2idx['<oov>'] = self.oov
+        self.word2idx['<pad>'] = 0
+        self.word2idx['<sos>'] = 1
+        self.word2idx['<eos>'] = 2
+        self.word2idx['<oov>'] = 3
         for idx, word in enumerate(words[:vocab_size]):
             self.word2idx[word] = idx + 4
         self.idx2word = {v: k for k, v in self.word2idx.items()}
@@ -74,11 +74,47 @@ class Dictionary(object):
 
 
 class Corpus(object):
-    def __init__(self, data_path, dict_file, vocab_size=1e6, subset=None):
+    def __init__(self, data_path, dict_file, vocab_size=1e6, kfold = 10, subset=None):
         self.dictionary = Dictionary(dict_file, vocab_size)
         self.vocab_size = vocab_size
 
         self.data, self.pairs = self.load_data(data_path, subset)
+        self.train, self.test = self.split_data(kfold)
+
+    def split_data(self, kfold):
+        random.shuffle(self.data)
+        train_size = int((kfold * 1. - 1) / kfold * len(self.data))
+        return self.data[0 : train_size], self.data[train_size : ]
+
+    def load_data(self, data_dir, subset):
+        files = glob('{}/*/*.lrc'.format(data_dir))
+        if subset:
+            files = random.sample(files, subset)
+        source = []
+        target = []
+        data = []
+        for file in files:
+            with open(file) as f:
+                song = []
+                for line in f:
+                    words = []
+                    if line == '':
+                        continue
+                    for x in line.strip().split(','):
+                        x = int(x)
+                        if x >= self.vocab_size:
+                            x = self.dictionary[self.dictionary.oov]
+                        else:
+                            x += self.dictionary.offset
+                        words.append(x)
+                    words = [self.dictionary[self.dictionary.sos]] + words
+                    words += [self.dictionary[self.dictionary.eos]]
+                    song.append(words)
+                data.extend(song)
+            source.extend([line[:-1] for line in song[:-1]])
+            target.extend([line[:-1] for line in song[1:]])
+        pairs = list(zip(source, target))
+        return data, pairs
 
     def load_data_new(self, file, subset):
         with open(file) as f:
