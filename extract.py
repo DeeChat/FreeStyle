@@ -3,8 +3,10 @@ import os
 import json
 from glob import glob
 from tqdm import tqdm
+from opencc import OpenCC
 import jieba
 
+opencc = OpenCC()
 jieba.set_dictionary('resources/dict.txt.big')
 list(jieba.cut('分词器预热。'))
 print()
@@ -25,14 +27,16 @@ def main():
         with open(file) as f:
             skip = False
             for line in f:
-                if line == '' or line[0] != '[' or regex_sw.search(line):
+                if line == '' or line[0] != '[' or regex_sw.search(line) or singer in line:
                     continue
                 line = regex_time.sub('', line)
                 line = regex_punc.sub('', line)
                 if regex_skip.search(line):
                     skip = True
                     break
-                line = regex_space.sub(' ', line.strip())
+                line = line.strip()
+                line = regex_space.sub(' ', line)
+                line = opencc.convert(line)
                 tokens = [token for token in jieba.cut(line) if token]
                 if len(tokens) > 0:
                     text.append(tokens)
