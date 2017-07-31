@@ -1,16 +1,16 @@
 import json
 
 
-def main():
-    with open('data.json') as f:
+def main(args):
+    with open(args.data_file) as f:
         data = json.load(f)['data']
 
-    with open('vocab.txt') as f:
+    with open(args.vocab_file) as f:
         vocab = []
         for line in f:
             vocab.append(line.split(',')[0])
 
-    vocab = set(vocab[:12000])
+    vocab = set(vocab[:args.vocab_size])
 
     def gen(data):
         for song in data:
@@ -25,12 +25,21 @@ def main():
                 yield chunk
     chunks = list(gen(data))
     print('extract {} chunks with vocab size {}.'.format(len(chunks), len(vocab)))
-    with open('chunks.json', 'w') as f:
+    with open(args.outf, 'w') as f:
         json.dump(chunks, f, ensure_ascii=False, indent=0)
-    # from pprint import pprint
-    # with open('chunks.txt', 'w') as f:
-    #     pprint(chunks, stream=f, compact=True)
+    if args.sample_file:
+        with open(args.sample_file, 'w') as f:
+            json.dump(chunks[:args.sample_size], f, ensure_ascii=False, indent=0)
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--vocab_size', type=int, default=12000)
+    parser.add_argument('--data_file', type=str, default='data.json')
+    parser.add_argument('--vocab_file', type=str, default='vocab.txt')
+    parser.add_argument('--outf', type=str, default='chunks.json')
+    parser.add_argument('--sample_file', type=str, default='sample.json')
+    parser.add_argument('--sample_size', type=int, default=100)
+    args = parser.parse_args()
+    main(args)
