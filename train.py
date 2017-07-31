@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime
 import numpy as np
 import random
 import json
@@ -16,8 +17,7 @@ from models import Seq2Seq, MLP_D, MLP_G
 
 '''
 Example Usage:
-(debug)
-python train.py --data_file data.json --dict_file vocab.txt --ae_model autoencoder_model_5.pt --ae_args args.json --outf gan --batch_size 2 --log_interval 10 --updates 1000
+python train.py --data_file chunks.json --dict_file vocab.txt --ae_model output/ae/autoencoder_model_5.pt --ae_args output/ae/args.json --outf gan --batch_size 64 --log_interval 200 --updates 200000 --cuda
 '''
 
 parser = argparse.ArgumentParser(description='GAN for Lyrics Generation')
@@ -66,6 +66,7 @@ parser.add_argument('--sample', action='store_true',
 parser.add_argument('--N', type=int, default=5,
                     help='N-gram order for training n-gram language model')
 parser.add_argument('--log_interval', type=int, default=100)
+parser.add_argument('--save_interval', type=int, default=10000)
 
 # Other
 parser.add_argument('--seed', type=int, default=1111,
@@ -112,14 +113,14 @@ def main():
 
     corpus = Corpus(args.data_file,
                     args.dict_file,
-                    vocab_size=ae_args.vocab_size)
-    autoencoder = Seq2Seq(emsize=ae_args.emsize,
-                          nhidden=ae_args.nhidden,
-                          ntokens=ae_args.ntokens,
-                          nlayers=ae_args.nlayers,
-                          noise_radius=ae_args.noise_radius,
-                          hidden_init=ae_args.hidden_init,
-                          dropout=ae_args.dropout,
+                    vocab_size=ae_args['vocab_size'])
+    autoencoder = Seq2Seq(emsize=ae_args['emsize'],
+                          nhidden=ae_args['nhidden'],
+                          ntokens=ae_args['ntokens'],
+                          nlayers=ae_args['nlayers'],
+                          noise_radius=ae_args['noise_radius'],
+                          hidden_init=ae_args['hidden_init'],
+                          dropout=ae_args['dropout'],
                           gpu=args.cuda)
     autoencoder.load_state_dict(state_dict)
     for param in autoencoder.parameters():
@@ -201,6 +202,7 @@ def main():
         return errD, errD_real, errD_fake
 
     niter = 0
+    start_time = datetime.now()
 
     for t in range(args.updates):
         niter += 1
@@ -216,13 +218,14 @@ def main():
             errG = train_gan_g(next(train_pairs))
 
         if niter % args.log_interval == 0:
-            log.info('[%d] Loss_D: %.8f (Loss_D_real: %.8f '
-                     'Loss_D_fake: %.8f) Loss_G: %.8f'
-                     % (niter, errD.data[0], errD_real.data[0],
-                        errD_fake.data[0], errG.data[0]))
-
-    save_model(gan_gen, out_dir, 'gan_gen_model.pt')
-    save_model(gan_disc, out_dir, 'gan_disc_model.pt')
+            eta = str((datetime.now() - start_time) / (t + 1) * (args.updates - t - 1)).split('.')[0]
+            log.info('[{}/{}] Loss_D: {:.6f} (real: {:.6f} '
+                     'fake: {:.6f}) Loss_G: {:.6f} ETA: {}'
+                     .format(niter, args.updates, errD.data.cpu()[0], errD_real.data.cpu()[0],
+                             errD_fake.data.cpu()[0], errG.data.cpu()[0], eta))
+        if niter % args.save_interval == 0:
+            save_model(gan_gen, out_dir, 'gan_gen_model_{}.pt'.format(t))
+            save_model(gan_disc, out_dir, 'gan_disc_model_{}.pt'.format(t))
 
 
 def save_model(model, dir, filename):

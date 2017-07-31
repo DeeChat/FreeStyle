@@ -77,6 +77,7 @@ class Corpus(object):
                          for line in chunk]
                 for i in range(len(chunk) - size + 1):
                     chunks.append(chunk[i: i + size])
+        return chunks
 
 
 def batchify(data, bsz, shuffle=False):
@@ -117,9 +118,7 @@ class BatchGen(object):
 
     def pad_data(self, data):
         maxlen = max(map(len, data))
-        for x in data:
-            padding = (maxlen - len(x)) * [Dictionary.pad]
-            x += padding
+        return [x + (maxlen - len(x)) * [Dictionary.pad] for x in data]
 
     def __iter__(self):
         return self
@@ -127,8 +126,8 @@ class BatchGen(object):
     def __next__(self):
         batch = random.sample(self.chunks, self.batch_size)
         source, target = list(zip(*batch))
-        self.pad_data(source)
-        self.pad_data(target)
+        source = self.pad_data(source)
+        target = self.pad_data(target)
         source = torch.LongTensor(source)
         target = torch.LongTensor(target)
         return source, target
