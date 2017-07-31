@@ -14,37 +14,33 @@ from torch.autograd import Variable
 from utils import to_gpu, Corpus, BatchGen
 from models import Seq2Seq, MLP_D, MLP_G
 
+'''
+Example Usage:
+(debug)
+python train.py --data_file data.json --dict_file vocab.txt --ae_model autoencoder_model_5.pt --ae_args args.json --outf gan --batch_size 2 --log_interval 10 --updates 1000
+'''
+
 parser = argparse.ArgumentParser(description='GAN for Lyrics Generation')
 # Path Arguments
-parser.add_argument('--data_path', type=str, required=True,
+parser.add_argument('--data_file', type=str, required=True,
                     help='location of the data corpus')
 parser.add_argument('--dict_file', type=str, required=True,
                     help='location of the dictionary file')
-parser.add_argument('--subset', type=int, default=0,
-                    help='use a small amount of data for quick debugging.')
-parser.add_argument('--outf', type=str, default='example',
+parser.add_argument('--ae_model', type=str, required=True,
+                    help='pre-trained autoencoder model file.')
+parser.add_argument('--ae_args', type=str, required=True)
+parser.add_argument('--outf', type=str, default='gan',
                     help='output directory name')
-
-# Data Processing Arguments
-parser.add_argument('--vocab_size', type=int, default=11000,
-                    help='cut vocabulary down to this size '
-                         '(most frequently seen words in train)')
-# parser.add_argument('--maxlen', type=int, default=30,
-#                     help='maximum sentence length')
 
 # Model Arguments
 parser.add_argument('--emsize', type=int, default=300,
                     help='size of word embeddings')
 parser.add_argument('--nhidden', type=int, default=300,
                     help='number of hidden units per layer')
-parser.add_argument('--nlayers', type=int, default=1,
-                    help='number of layers')
 parser.add_argument('--arch_g', type=str, default='300-300',
                     help='generator architecture (MLP)')
 parser.add_argument('--arch_d', type=str, default='300-300',
                     help='critic/discriminator architecture (MLP)')
-parser.add_argument('--dropout', type=float, default=0.0,
-                    help='dropout applied to layers (0 = no dropout)')
 
 # Training Arguments
 parser.add_argument('--updates', type=int, default=3e5,
@@ -110,32 +106,28 @@ log.addHandler(ch)
 
 
 def main():
-    # create corpus
-    corpus = Corpus(args.data_path,  # TODO: 合并两个路径
-                    args.dict_file,
-                    vocab_size=args.vocab_size,
-                    subset=args.subset)
-    # dumping vocabulary
-    with open(os.path.join(out_dir, 'vocab.json'), 'w') as f:
-        json.dump(corpus.dictionary.word2idx, f)
+    state_dict = torch.load(args.ae_model)
+    with open(args.ae_args) as f:
+        ae_args = json.load(f)
 
+    corpus = Corpus(args.data_file,
+                    args.dict_file,
+                    vocab_size=ae_args.vocab_size)
+    autoencoder = Seq2Seq(emsize=ae_args.emsize,
+                          nhidden=ae_args.nhidden,
+                          ntokens=ae_args.ntokens,
+                          nlayers=ae_args.nlayers,
+                          noise_radius=ae_args.noise_radius,
+                          hidden_init=ae_args.hidden_init,
+                          dropout=ae_args.dropout,
+                          gpu=args.cuda)
+    autoencoder.load_state_dict(state_dict)
+    for param in autoencoder.parameters():
+        param.requires_grad = False
     # save arguments
-    ntokens = len(corpus.dictionary.word2idx)
-    args.ntokens = ntokens
     with open(os.path.join(out_dir, 'args.json'), 'w') as f:
         json.dump(vars(args), f)
-    log.info('[Data Loaded.]')
-
-    autoencoder = Seq2Seq(emsize=args.emsize,
-                          nhidden=args.nhidden,
-                          ntokens=ntokens,
-                          nlayers=args.nlayers,
-                          noise_radius=args.noise_radius,
-                          hidden_init=args.hidden_init,
-                          dropout=args.dropout,
-                          gpu=args.cuda)
-    # TODO load ae from pre_trained model and make it not trainable
-    # even: preprocess all the training pairs, convert them into vectors
+    log.info('[Data and AE model loaded.]')
 
     gan_gen = MLP_G(ninput=args.nhidden, noutput=args.nhidden, layers=args.arch_g)
     gan_disc = MLP_D(ninput=2 * args.nhidden, noutput=1, layers=args.arch_d)
@@ -155,7 +147,7 @@ def main():
 
     one = to_gpu(args.cuda, torch.FloatTensor([1]))
     mone = one * -1
-    train_pairs = BatchGen(corpus.pairs, args.batch_size)
+    train_pairs = BatchGen(corpus.get_chunks(size=2), args.batch_size)
 
     def train_gan_g(batch):
         gan_gen.train()
