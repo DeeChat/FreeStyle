@@ -12,8 +12,12 @@ python train_ae.py --data_file chunks.json --dict_file vocab.txt --outf ae --bat
 ```bash
 python train.py --data_file chunks.json --dict_file vocab.txt --ae_model output/ae/autoencoder_model_5.pt --ae_args output/ae/args.json --outf gan --batch_size 64 --log_interval 200 --updates 200000 --cuda
 ```
+- 生成歌词：
+```bash
+python generate.py --ae_args output/ae/args.json --gan_args output/gan/args.json --vocab_file output/ae/vocab.json --ae_model output/ae/autoencoder_model_5.pt --g_model output/gan/gan_gen_model_11.pt --d_model output/gan/gan_disc_model_11.pt --data_path chunks.json --dict_file vocab.txt --noprint --seed 1111 --ngenerations 50 --outf generated/11.txt
+```
 
-训练GAN的代码可能还藏着比较大的问题，前面的步骤看起来都已经比较正常了。
+目前项目的文件结构还比较混乱，近期会修复。
 
 ---
 目前主要需要补充的部分：
