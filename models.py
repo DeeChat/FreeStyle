@@ -101,7 +101,7 @@ class MLP_G(nn.Module):
 
 class Seq2Seq(nn.Module):
     def __init__(self, emsize, nhidden, ntokens, nlayers, noise_radius=0.2,
-                 hidden_init=False, dropout=0, gpu=False):
+                 hidden_init=False, dropout=0, gpu=False, pretrained_weights=None):
         super(Seq2Seq, self).__init__()
         self.nhidden = nhidden
         self.emsize = emsize
@@ -135,14 +135,18 @@ class Seq2Seq(nn.Module):
         # Initialize Linear Transformation
         self.linear = nn.Linear(nhidden, ntokens)
 
-        self.init_weights()
+        self.init_weights(pretrained_weights)
 
-    def init_weights(self):
+    def init_weights(self, pretrained_weights = None):
         initrange = 0.1
 
         # Initialize Vocabulary Matrix Weight
-        self.embedding.weight.data.uniform_(-initrange, initrange)
-        self.embedding_decoder.weight.data.uniform_(-initrange, initrange)
+        if pretrained_weights is None:
+            self.embedding.weight.data.uniform_(-initrange, initrange)
+            self.embedding_decoder.weight.data.uniform_(-initrange, initrange)
+        else:
+            self.embedding.weight = nn.Parameter(pretrained_weights)
+            self.embedding_decoder.weight = nn.Parameter(pretrained_weights)
 
         # Initialize Encoder and Decoder Weights
         for p in self.encoder.parameters():

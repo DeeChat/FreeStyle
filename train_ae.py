@@ -18,9 +18,11 @@ from utils import Corpus, to_gpu, batchify
 '''
 Example Usage:
 (train)
-python train_ae.py --data_file chunks.json --dict_file vocab.txt --outf ae --batch_size 64 --split 0.1 --log_interval 100 --cuda
+python train_ae.py --data_file data/chunks_default.json --dict_file data/vocab.txt --outf train-ae-64 --batch_size 64 --split 0.1 \
+--log_interval 100 --wv_file data/new_word_embeddings.txt --wv_dict_file data/wv_dict.json --cuda
 (debug)
-python train_ae.py --data_file sample.json --dict_file vocab.txt --outf ae --batch_size 2 --split 0.1 --log_interval 10
+python train_ae.py --data_file data/sample.json --dict_file data/vocab.txt --outf sample-ae --batch_size 2 --split 0.1 \
+--log_interval 10 --wv_file data/new_word_embeddings.txt --wv_dict_file data/wv_dict.json
 '''
 
 
@@ -72,6 +74,8 @@ parser.add_argument('--seed', type=int, default=1111,
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--log_interval', type=int, default=100)
+parser.add_argument('--wv_file', type=str, default="word_embedding.txt")
+parser.add_argument('--wv_dict_file', type=str, default="wv_dict.json")
 
 args = parser.parse_args()
 print(vars(args))
@@ -98,12 +102,37 @@ fh = logging.FileHandler(os.path.join(out_dir, 'logs.txt'))
 fh.setLevel(logging.DEBUG)
 ch = logging.StreamHandler(sys.stdout)
 ch.setLevel(logging.INFO)
-formatter = logging.Formatter(fmt='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S')
+formatter = logging.Formatter(fmt='[%(asctime)s] - %(message)s', datefmt='%m/%d/%Y %H:%M:%S')
 fh.setFormatter(formatter)
 ch.setFormatter(formatter)
 log.addHandler(fh)
 log.addHandler(ch)
 
+
+def get_embeddings(idx2word, wv_path, wv_dict_path):
+    with open(wv_dict_path, 'r') as f:
+        wv_dict = json.load(f)
+    pretrained_wv = {}
+    with open(wv_path, 'r') as f:
+        line = f.readline()
+        n_words, vector_size = map(int, line.split())
+        for line in f.readlines():
+            s = line.split()
+            idx = s[0]
+            v = list(map(float, s[1:]))
+            pretrained_wv[idx] = v
+    assert(vector_size == args.emsize)
+    embeddings = []
+    ntokens = len(idx2word)
+    for i in range(ntokens):
+        w = idx2word[i]
+        if w in wv_dict and wv_dict[w] in pretrained_wv:
+            embeddings.append(pretrained_wv[wv_dict[w]])
+        else:
+            print('{} is not in pretrained word embeddings'.format(w))
+            embeddings.append(np.random.uniform(-0.1, 0.1, vector_size).tolist())
+
+    return torch.Tensor(embeddings)
 
 def main():
     # prepare corpus
@@ -120,9 +149,11 @@ def main():
     args.ntokens = ntokens
     with open(os.path.join(out_dir, 'args.json'), 'w') as f:
         json.dump(vars(args), f)
+
+    embeddings = None # get_embeddings(corpus.dictionary.idx2word, args.wv_file, args.wv_dict_file)
     log.info('[Data Loaded.]')
 
-    autoencoder = AutoEncoder()
+    autoencoder = AutoEncoder(embeddings)
 
     train, valid = corpus.get_data(split=args.split)
     valid = batchify(valid, args.batch_size, shuffle=False)
@@ -135,24 +166,23 @@ def main():
         start_time = datetime.now()
 
         for i, batch in enumerate(batches):
-            loss = autoencoder.update(batch)
+            loss, average_precision, global_acc = autoencoder.update(batch)
             if i % args.log_interval == 0 and i > 0:
-                log.info(('[Epoch {} {}/{} Loss {:.5f} ETA {}]').format(
-                    epoch, i, len(batches), loss,
+                log.info(('[Epoch {} {}/{} Loss: {:.5f}, AP: {:.5f}, global acc: {:0.5f}, ETA: {}]').format(
+                    epoch, i, len(batches), loss, average_precision, global_acc,
                     str((datetime.now() - start_time) / (i + 1) * (len(batches) - i - 1)).split('.')[0]))
 
             global_iters += 1
             if global_iters % 100 == 0:
                 autoencoder.anneal()
 
-        valid_loss, accuracy = autoencoder.evaluate(valid)
-        log.warn('Epoch {} valid loss: {} | acc: {}'.format(epoch, valid_loss, accuracy))
+        valid_loss, average_precision, global_acc = autoencoder.evaluate(valid)
+        log.warn('Epoch {} valid loss: {:.5f} | AP: {:.5f} | global acc: {:.5f}'.format(epoch, valid_loss, average_precision, global_acc))
 
         autoencoder.save(out_dir, 'autoencoder_model_{}.pt'.format(epoch))
 
-
 class AutoEncoder:
-    def __init__(self):
+    def __init__(self, pretrained_weights = None):
         self.autoencoder = Seq2Seq(emsize=args.emsize,
                                    nhidden=args.nhidden,
                                    ntokens=args.ntokens,
@@ -160,7 +190,9 @@ class AutoEncoder:
                                    noise_radius=args.noise_radius,
                                    hidden_init=args.hidden_init,
                                    dropout=args.dropout,
-                                   gpu=args.cuda)
+                                   gpu=args.cuda,
+                                   pretrained_weights=pretrained_weights
+                                   )
         # self.optimizer = optim.SGD(self.autoencoder.parameters(), lr=args.lr)
         self.optimizer = optim.Adam(self.autoencoder.parameters())
         self.criterion = nn.CrossEntropyLoss()
@@ -197,7 +229,21 @@ class AutoEncoder:
         torch.nn.utils.clip_grad_norm(self.autoencoder.parameters(), args.clip)
         self.optimizer.step()
 
-        return loss.data.cpu().numpy()[0]
+        # new accuracy
+        all_accuracies = []
+        max_vals, max_indices = torch.max(flattened_output, 1)
+        max_len = max_indices.size(0) // args.batch_size
+        for i in range(args.batch_size):
+            sample_mask = mask[i * max_len: (i + 1) * max_len]
+            sample_out = max_indices[i * max_len: (i + 1) * max_len].masked_select(sample_mask)
+            sample_target = target[i * max_len: (i + 1) * max_len].masked_select(sample_mask)
+            acc = torch.mean(sample_out.eq(sample_target).float()).data[0]
+            all_accuracies.append(acc)
+            # print('acc = ', acc, ',  mean = ', np.mean(all_accuracies))
+        global_acc = len(list(filter(lambda x: x >= 1.0, all_accuracies)))*1.0 / len(all_accuracies)
+        # print(all_accuracies, ', global_acc = ', global_acc)
+
+        return loss.data.cpu().numpy()[0], np.mean(all_accuracies), global_acc
 
     def anneal(self):
         '''exponentially decaying noise on autoencoder'''
@@ -226,17 +272,29 @@ class AutoEncoder:
                 flattened_output.masked_select(output_mask).view(-1, args.ntokens)
             total_loss.append(self.criterion(masked_output / args.temp, masked_target).data.cpu().numpy()[0])
 
-            # accuracy
-            max_vals, max_indices = torch.max(masked_output, 1)
-            all_accuracies.append(
-                torch.mean(max_indices.eq(masked_target).float()).data[0])
+            # new accuracy
+            max_vals, max_indices = torch.max(flattened_output, 1)
+            max_len = max_indices.size(0) // args.batch_size
+            for i in range(args.batch_size):
+                sample_mask = mask[i * max_len: (i + 1) * max_len]
+                sample_out = max_indices[i * max_len: (i + 1) * max_len].masked_select(sample_mask)
+                sample_target = target[i * max_len: (i + 1) * max_len].masked_select(sample_mask)
+                acc = torch.mean(sample_out.eq(sample_target).float()).data[0]
+                all_accuracies.append(acc)
+            global_acc = len(list(filter(lambda x: x >= 1.0, all_accuracies)))*1.0 / len(all_accuracies)
+            # print(all_accuracies, ', global_acc = ', global_acc)
 
-        return np.mean(total_loss), np.mean(all_accuracies)
+            # accuracy
+            # max_vals, max_indices = torch.max(masked_output, 1)
+            # all_accuracies.append(
+            #    torch.mean(max_indices.eq(masked_target).float()).data[0])
+            # global_acc = len(list(filter(lambda x: x >= 1.0, all_accuracies)))*1.0 / len(all_accuracies)
+            # print('global_acc = ', global_acc)
+        return np.mean(total_loss), np.mean(all_accuracies), global_acc
 
     def save(self, dirname, filename):
         with open(os.path.join(dirname, filename), 'wb') as f:
             torch.save(self.autoencoder.state_dict(), f)
-
 
 if __name__ == '__main__':
     main()
