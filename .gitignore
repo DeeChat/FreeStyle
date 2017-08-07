@@ -4,3 +4,8 @@ FreeStyle.iml
 data*
 __pycache__*
 output*
+netease-data*
+lda_evaluate/lda_netease_models*
+lda_evaluate/lda_models*
+lda_evaluate/gan_answer.dat
+lda_evaluate/answer*
