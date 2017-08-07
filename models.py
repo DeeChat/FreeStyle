@@ -267,32 +267,32 @@ class Seq2Seq(nn.Module):
         return max_indices
 
 
-def load_models(load_path):
-    model_args = json.load(open("{}/args.json".format(load_path), "r"))
-    word2idx = json.load(open("{}/vocab.json".format(load_path), "r"))
+def load_models(ae_args_file, gan_args_file, vocab_file, ae_model, g_model, d_model):
+    ae_args = json.load(open(ae_args_file, "r"))
+    gan_args = json.load(open(gan_args_file, 'r'))
+    word2idx = json.load(open(vocab_file, "r"))
     idx2word = {v: k for k, v in word2idx.items()}
 
-    autoencoder = Seq2Seq(emsize=model_args['emsize'],
-                          nhidden=model_args['nhidden'],
-                          ntokens=model_args['ntokens'],
-                          nlayers=model_args['nlayers'],
-                          hidden_init=model_args['hidden_init'])
-    gan_gen = MLP_G(ninput=model_args['nhidden'],
-                    noutput=model_args['nhidden'],
-                    layers=model_args['arch_g'])
-    gan_disc = MLP_D(ninput=2 * model_args['nhidden'],
+    autoencoder = Seq2Seq(emsize=ae_args['emsize'],
+                          nhidden=ae_args['nhidden'],
+                          ntokens=ae_args['ntokens'],
+                          nlayers=ae_args['nlayers'],
+                          hidden_init=ae_args['hidden_init'])
+    gan_gen = MLP_G(ninput=gan_args['nhidden'],
+                    noutput=gan_args['nhidden'],
+                    layers=gan_args['arch_g'])
+    gan_disc = MLP_D(ninput=2 * gan_args['nhidden'],
                      noutput=1,
-                     layers=model_args['arch_d'])
+                     layers=gan_args['arch_d'])
 
-    print('Loading models from' + load_path)
-    ae_path = os.path.join(load_path, "autoencoder_model.pt")
-    gen_path = os.path.join(load_path, "gan_gen_model.pt")
-    disc_path = os.path.join(load_path, "gan_disc_model.pt")
+    ae_path = os.path.join(ae_model)
+    gen_path = os.path.join(g_model)
+    disc_path = os.path.join(d_model)
 
     autoencoder.load_state_dict(torch.load(ae_path))
     gan_gen.load_state_dict(torch.load(gen_path))
     gan_disc.load_state_dict(torch.load(disc_path))
-    return model_args, idx2word, autoencoder, gan_gen, gan_disc
+    return ae_args, gan_args, idx2word, autoencoder, gan_gen, gan_disc
 
 
 def decode_idx(vocab, idx):
