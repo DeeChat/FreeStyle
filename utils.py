@@ -40,8 +40,8 @@ class Dictionary(object):
             if key in self.word2idx:
                 return self.word2idx[key]
             else:
-                print(key, [ord(c) for c in key])
-                exit()
+                # print(key, [ord(c) for c in key])
+                # exit()
                 return self.oov
         if type(key) is int:
             if key in self.idx2word:
@@ -95,7 +95,8 @@ def batchify(data, bsz, shuffle=False):
         target = [x[1:] for x in batch]
 
         # find length to pad to, subtract 1 from lengths b/c includes BOTH starts & end symbols
-        maxlen = max([len(x) - 1 for x in batch])
+        lengths = [len(x) - 1 for x in batch]
+        maxlen = max(lengths)
         for x, y in zip(source, target):
             padding = (maxlen - len(x)) * [Dictionary.pad]
             x += padding
@@ -103,8 +104,10 @@ def batchify(data, bsz, shuffle=False):
 
         source = torch.LongTensor(source)
         target = torch.LongTensor(target).view(-1)
+        # substract 1 for length embedding indexing
+        lengths = torch.LongTensor([x - 1 for x in lengths])
 
-        batches.append((source, target))
+        batches.append((source, target, lengths))
 
     return batches
 

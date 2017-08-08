@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+import numpy as np
 
 from utils import to_gpu
 import json
-import os
 
 
 class MLP_D(nn.Module):
@@ -100,7 +100,7 @@ class MLP_G(nn.Module):
 
 
 class Seq2Seq(nn.Module):
-    def __init__(self, emsize, nhidden, ntokens, nlayers, noise_radius=0.2,
+    def __init__(self, emsize, nhidden, ntokens, nlayers, max_len=20, noise_radius=0.2,
                  hidden_init=False, dropout=0, gpu=False):
         super(Seq2Seq, self).__init__()
         self.nhidden = nhidden
@@ -117,6 +117,10 @@ class Seq2Seq(nn.Module):
         # Vocabulary embedding
         self.embedding = nn.Embedding(ntokens, emsize)
         self.embedding_decoder = nn.Embedding(ntokens, emsize)
+        # one more <sos> or <eos>
+        max_len += 1
+        emsize_len = int(np.ceil(np.log(max_len) / np.log(2)))
+        self.embedding_length = nn.Embedding(max_len, emsize_len)
 
         # RNN Encoder and Decoder
         self.encoder = nn.LSTM(input_size=emsize,
@@ -125,7 +129,7 @@ class Seq2Seq(nn.Module):
                                dropout=dropout,
                                batch_first=True)
 
-        decoder_input_size = emsize + nhidden
+        decoder_input_size = emsize + nhidden + emsize_len
         self.decoder = nn.LSTM(input_size=decoder_input_size,
                                hidden_size=nhidden,
                                num_layers=1,
@@ -143,6 +147,7 @@ class Seq2Seq(nn.Module):
         # Initialize Vocabulary Matrix Weight
         self.embedding.weight.data.uniform_(-initrange, initrange)
         self.embedding_decoder.weight.data.uniform_(-initrange, initrange)
+        self.embedding_length.weight.data.uniform_(-initrange, initrange)
 
         # Initialize Encoder and Decoder Weights
         for p in self.encoder.parameters():
@@ -163,28 +168,22 @@ class Seq2Seq(nn.Module):
         zeros = Variable(torch.zeros(self.nlayers, bsz, self.nhidden))
         return to_gpu(self.gpu, zeros)
 
-    def store_grad_norm(self, grad):
-        norm = torch.norm(grad, 2, 1)
-        self.grad_norm = norm.detach().data.mean()
-        return grad
-
-    def forward(self, indices, noise, encode_only=False):
+    def forward(self, indices, length, noise):
         batch_size, maxlen = indices.size()
 
         hidden = self.encode(indices, noise)
 
-        if encode_only:
-            return hidden
-
-        if hidden.requires_grad:
-            hidden.register_hook(self.store_grad_norm)
+        embed_len = self.embedding_length(length.unsqueeze(1))
+        hidden = torch.cat([hidden,
+                            embed_len.squeeze(1)],
+                           dim=1)
 
         decoded = self.decode(hidden, batch_size, maxlen,
                               indices=indices)
 
         return decoded
 
-    def encode(self, indices, noise):
+    def encode(self, indices, noise=False):
         embeddings = self.embedding(indices)
 
         # Encode
@@ -226,8 +225,14 @@ class Seq2Seq(nn.Module):
 
         return decoded
 
-    def generate(self, hidden, maxlen, sample=True, temp=1.0):
+    def generate(self, hidden, length, sample=True, temp=1.0):
         """Generate through decoder; no backprop"""
+        embed_len = self.embedding_length(length.unsqueeze(1))
+        hidden = torch.cat([hidden,
+                            embed_len.expand(embed_len.size(0),
+                                             hidden.size(1),
+                                             embed_len.size(2))],
+                           dim=2)
 
         batch_size = hidden.size(0)
 
@@ -246,7 +251,7 @@ class Seq2Seq(nn.Module):
 
         # unroll
         all_indices = []
-        for i in range(maxlen):
+        for i in range(torch.max(length)):
             output, state = self.decoder(inputs, state)
             overvocab = self.linear(output.squeeze(1))
 
@@ -267,6 +272,19 @@ class Seq2Seq(nn.Module):
         return max_indices
 
 
+def load_ae(ae_args_file, ae_model, vocab_file):
+    ae_args = json.load(open(ae_args_file, "r"))
+    word2idx = json.load(open(vocab_file, "r"))
+    idx2word = {v: k for k, v in word2idx.items()}
+    autoencoder = Seq2Seq(emsize=ae_args['emsize'],
+                          nhidden=ae_args['nhidden'],
+                          ntokens=ae_args['ntokens'],
+                          nlayers=ae_args['nlayers'],
+                          hidden_init=ae_args['hidden_init'])
+    autoencoder.load_state_dict(torch.load(ae_model))
+    return ae_args, autoencoder, idx2word
+
+
 def load_models(ae_args_file, gan_args_file, vocab_file, ae_model, g_model, d_model):
     ae_args = json.load(open(ae_args_file, "r"))
     gan_args = json.load(open(gan_args_file, 'r'))
@@ -277,7 +295,8 @@ def load_models(ae_args_file, gan_args_file, vocab_file, ae_model, g_model, d_mo
                           nhidden=ae_args['nhidden'],
                           ntokens=ae_args['ntokens'],
                           nlayers=ae_args['nlayers'],
-                          hidden_init=ae_args['hidden_init'])
+                          hidden_init=ae_args['hidden_init'],
+                          gpu=True)
     gan_gen = MLP_G(ninput=gan_args['nhidden'],
                     noutput=gan_args['nhidden'],
                     layers=gan_args['arch_g'])
@@ -285,13 +304,9 @@ def load_models(ae_args_file, gan_args_file, vocab_file, ae_model, g_model, d_mo
                      noutput=1,
                      layers=gan_args['arch_d'])
 
-    ae_path = os.path.join(ae_model)
-    gen_path = os.path.join(g_model)
-    disc_path = os.path.join(d_model)
-
-    autoencoder.load_state_dict(torch.load(ae_path))
-    gan_gen.load_state_dict(torch.load(gen_path))
-    gan_disc.load_state_dict(torch.load(disc_path))
+    autoencoder.load_state_dict(torch.load(ae_model))
+    gan_gen.load_state_dict(torch.load(g_model))
+    gan_disc.load_state_dict(torch.load(d_model))
     return ae_args, gan_args, idx2word, autoencoder, gan_gen, gan_disc
 
 
@@ -311,6 +326,28 @@ def decode_idx(vocab, idx):
     return sent
 
 
+def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen):
+    # autoencoder.eval()
+    max_indices = autoencoder.generate(hidden=hidden,
+                                       maxlen=maxlen,
+                                       sample=sample)
+    max_indices = max_indices.data.cpu().numpy()
+    sentences = []
+    for idx in max_indices:
+        # generated sentence
+        words = [vocab[x] for x in idx]
+        # truncate sentences to first occurrence of <eos>
+        truncated_sent = []
+        for w in words:
+            if w != '<eos>':
+                truncated_sent.append(w)
+            else:
+                break
+        sent = "".join(truncated_sent)
+        sentences.append(sent)
+    return sentences
+
+
 def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
     """
     Assume inp is batch_size x max_sen_len
@@ -319,7 +356,7 @@ def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
     autoencoder.eval()
 
     # generate from the previous line
-    fake_hidden = gan_gen(autoencoder(inp, noise=False, encode_only=True))
+    fake_hidden = gan_gen(autoencoder.encode(inp))
     max_indices = autoencoder.generate(hidden=fake_hidden,
                                        maxlen=maxlen,
                                        sample=sample)

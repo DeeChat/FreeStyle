@@ -5,6 +5,8 @@ import sys
 import random
 import logging
 import numpy as np
+import http.client
+import urllib
 from datetime import datetime
 
 import torch
@@ -16,11 +18,12 @@ from models import Seq2Seq
 from utils import Corpus, to_gpu, batchify
 
 '''
+TODO clear pushover
 Example Usage:
 (train)
-python train_ae.py --data_file chunks.json --dict_file vocab.txt --outf ae --batch_size 64 --split 0.1 --log_interval 100 --cuda
+python train_ae.py --data_file chunks.json --dict_file vocab.txt --max_len 20 --outf ae --batch_size 64 --split 0.1 --log_interval 100 --cuda
 (debug)
-python train_ae.py --data_file sample.json --dict_file vocab.txt --outf ae --batch_size 2 --split 0.1 --log_interval 10
+python train_ae.py --data_file sample.json --dict_file vocab.txt --max_len 20 --outf ae --batch_size 2 --split 0.1 --log_interval 10
 '''
 
 
@@ -32,6 +35,8 @@ parser.add_argument('--dict_file', type=str, required=True,
                     help='location of the dictionary file')
 parser.add_argument('--outf', type=str, default='example',
                     help='output directory name')
+parser.add_argument('--max_len', type=int, required=True,
+                    help='max number of tokens in lines')
 # Data Processing Arguments
 parser.add_argument('--vocab_size', type=int, default=12000,
                     help='cut vocabulary down to this size '
@@ -42,7 +47,8 @@ parser.add_argument('--batch_size', type=int, default=64, metavar='N',
 parser.add_argument('--epochs', type=int, default=15,
                     help='maximum number of epochs')
 parser.add_argument('--split', type=float, default=0.1,
-                    help='the ratio of test data.')
+                    help='the ratio of validation data.'
+                         'set it to 0 to switch off validating')
 # Model Arguments
 parser.add_argument('--emsize', type=int, default=300,
                     help='size of word embeddings')
@@ -124,8 +130,11 @@ def main():
 
     autoencoder = AutoEncoder()
 
-    train, valid = corpus.get_data(split=args.split)
-    valid = batchify(valid, args.batch_size, shuffle=False)
+    if args.split:
+        train, valid = corpus.get_data(split=args.split)
+        valid = batchify(valid, args.batch_size, shuffle=False)
+    else:
+        train = corpus.get_data()
 
     for epoch in range(1, args.epochs + 1):
         # shuffle train data in each epoch
@@ -145,8 +154,22 @@ def main():
             if global_iters % 100 == 0:
                 autoencoder.anneal()
 
-        valid_loss, accuracy = autoencoder.evaluate(valid)
-        log.warn('Epoch {} valid loss: {} | acc: {}'.format(epoch, valid_loss, accuracy))
+        if args.split:
+            valid_loss, accuracy = autoencoder.evaluate(valid)
+            log.warn('Epoch {} valid loss: {} | acc: {}'.format(epoch, valid_loss, accuracy))
+            try:
+                conn = http.client.HTTPSConnection("api.pushover.net:443")
+                conn.request("POST", "/1/messages.json",
+                             urllib.parse.urlencode({
+                                 "token": "a1wbjvuu78kxj8i6yjjp7dbbhmgbvb",
+                                 "user": "u8fkm8ffskig2qx11ca14pd3zr7xf3",
+                                 "message": 'Epoch {} valid loss: {} | acc: {}'.format(epoch, valid_loss, accuracy),
+                             }), {"Content-type": "application/x-www-form-urlencoded"})
+                response = conn.getresponse()
+                if response.status != 200:
+                    log.warn('pushover message failed with code {}: {}'.format(response.status, response.reason))
+            except Exception as e:
+                pass
 
         autoencoder.save(out_dir, 'autoencoder_model_{}.pt'.format(epoch))
 
@@ -157,6 +180,7 @@ class AutoEncoder:
                                    nhidden=args.nhidden,
                                    ntokens=args.ntokens,
                                    nlayers=args.nlayers,
+                                   max_len=args.max_len,
                                    noise_radius=args.noise_radius,
                                    hidden_init=args.hidden_init,
                                    dropout=args.dropout,
@@ -172,9 +196,10 @@ class AutoEncoder:
         self.autoencoder.train()
         self.autoencoder.zero_grad()
 
-        source, target = batch
+        source, target, length = batch
         source = to_gpu(args.cuda, Variable(source))
         target = to_gpu(args.cuda, Variable(target))
+        length = to_gpu(args.cuda, Variable(length))
 
         # Create sentence length mask over padding
         mask = target.gt(0)
@@ -183,7 +208,7 @@ class AutoEncoder:
         output_mask = mask.unsqueeze(1).expand(mask.size(0), args.ntokens)
 
         # output: batch x seq_len x ntokens
-        output = self.autoencoder(source, noise=True)
+        output = self.autoencoder(source, length, noise=True)
 
         # output_size: batch_size, maxlen, self.ntokens
         flattened_output = output.view(-1, args.ntokens)
@@ -209,9 +234,10 @@ class AutoEncoder:
         all_accuracies = []
 
         for i, batch in enumerate(valid):
-            source, target = batch
+            source, target, length = batch
             source = to_gpu(args.cuda, Variable(source, volatile=True))
             target = to_gpu(args.cuda, Variable(target, volatile=True))
+            length = to_gpu(args.cuda, Variable(length, volatile=True))
 
             mask = target.gt(0)
             masked_target = target.masked_select(mask)
@@ -219,7 +245,7 @@ class AutoEncoder:
             output_mask = mask.unsqueeze(1).expand(mask.size(0), args.ntokens)
 
             # output: batch x seq_len x ntokens
-            output = self.autoencoder(source, noise=True)
+            output = self.autoencoder(source, length, noise=False)
             flattened_output = output.view(-1, args.ntokens)
 
             masked_output = \
