@@ -23,10 +23,10 @@ n = 3
 #
 #freq_dist = nltk.FreqDist(alllist)
 #Dist_p = Probdist(freq_dist,1)
-#pickle.dumps(Dist_p,open('ngram_dist','wb'))
+#pickle.dump(Dist_p,open('ngram_dist','wb'))
 
 #Load Language Model From Default
-Dist_p = pickle.loads(open('ngram_dist','rb'))
+Dist_p = pickle.load(open('ngram_dist','rb'))
 
 def score(sentence):
 	generated_ngrams = ngrams(sentence, n, pad_left=True, pad_right=True, left_pad_symbol='<s>', right_pad_symbol='</s>')

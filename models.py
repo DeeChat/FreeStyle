@@ -256,25 +256,22 @@ class Seq2Seq(nn.Module):
             sen_score = {}
 
             if not sample:
-                    vals, indices = torch.topk(overvocab, beam_size, 1)
+                vals, indices = torch.topk(overvocab, beam_size, 1)
             else:
                 # sampling
                 probs = F.softmax(overvocab / temp)
                 indices = torch.multinomial(probs, beam_size)
 
             for index in range(beam_size):
-                string = []
                 string = all_indices.copy()
-                string.append(torch.index_select(indices, 1, Variable(torch.LongTensor([index]))))
+                string.append(indices[:, index])
                 string = torch.cat(string, 1)
                 string = string.data.cpu().numpy()
                 string = [[vocab[x] for x in idx] for idx in string]
                 sen_score[index] = sum(score(x) for x in string)
 
-            print(sen_score)
             index = sorted(sen_score.items(), key=lambda d:d[1], reverse=True)[0][0]
-            print(index)
-            indices = torch.index_select(indices, 1, Variable(torch.LongTensor([index])))
+            indices = indices[:, index]
             all_indices.append(indices)
 
             embedding = self.embedding_decoder(indices)
