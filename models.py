@@ -225,14 +225,12 @@ class Seq2Seq(nn.Module):
 
         return decoded
 
-    def generate(self, hidden, length, sample=True, temp=1.0):
+    def generate(self, hidden, length, sample=False, temp=1.0):
         """Generate through decoder; no backprop"""
         embed_len = self.embedding_length(length.unsqueeze(1))
         hidden = torch.cat([hidden,
-                            embed_len.expand(embed_len.size(0),
-                                             hidden.size(1),
-                                             embed_len.size(2))],
-                           dim=2)
+                            embed_len.squeeze(1)],
+                           dim=1)
 
         batch_size = hidden.size(0)
 
@@ -251,7 +249,7 @@ class Seq2Seq(nn.Module):
 
         # unroll
         all_indices = []
-        for i in range(torch.max(length)):
+        for i in range(torch.max(length.data)):
             output, state = self.decoder(inputs, state)
             overvocab = self.linear(output.squeeze(1))
 
