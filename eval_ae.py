@@ -17,7 +17,7 @@ from tqdm import tqdm
 TODO clear pushover
 Example Usage:
 (eval)
-python eval_ae.py --data_file chunks.json --dict_file vocab.txt --ae_args output/ae/args.json --model output/ae/autoencoder_model_13.pt --len_samples 1000 --batch_size 64 --split 0.1 --cuda
+python eval_ae.py --data_file chunks.json --dict_file vocab.txt --ae_args output/ae/args.json --model output/ae/autoencoder_model_12.pt --len_samples 1000 --batch_size 64 --split 0.1 --cuda
 (debug)
 python eval_ae.py --data_file sample.json --dict_file vocab.txt --ae_args output/ae/args.json --model output/ae/autoencoder_model_13.pt --batch_size 2 --split 0
 '''
@@ -108,25 +108,16 @@ def main():
         length = to_gpu(args.cuda, Variable(length, volatile=True))
 
         # output: batch x seq_len x ntokens
-        output = autoencoder(source, length, noise=False)
+        code = autoencoder.encode(source)
+        max_indices = autoencoder.generate(code, length).contiguous()
+
         # ============word accuracy============
-        flattened_output = output.view(-1, ae_args['ntokens'])
-        mask = target.gt(0)
-        masked_target = target.masked_select(mask)
-        # examples x ntokens
-        output_mask = mask.unsqueeze(1).expand(mask.size(0), ae_args['ntokens'])
-        masked_output = \
-            flattened_output.masked_select(output_mask).view(-1, ae_args['ntokens'])
-        # accuracy
-        max_vals, max_indices = torch.max(masked_output, 1)
-        word_accuracies.extend(
-            max_indices.eq(masked_target).data.cpu().tolist())
+        word_accuracies.extend(     # strip the last <eos>
+            max_indices.view(-1).eq(target[:, :-1].contiguous().view(-1)).data.cpu().tolist())
 
         # ==============generate examples==================
-        max_values, max_indices = torch.max(output, 2)
-        max_indices = \
-            max_indices.view(output.size(0), -1).data.cpu().numpy()
-        target = target.view(output.size(0), -1).data.cpu().numpy()
+        max_indices = max_indices.data.cpu().numpy()
+        target = target.data.cpu().numpy()
 
         for t, idx in zip(target, max_indices):
             # real sentence
@@ -157,10 +148,9 @@ def main():
         for j in range(-2, 3):
             length_ = torch.max(length + j, one)
             length_ = to_gpu(args.cuda, Variable(length_, volatile=True))
-            output = autoencoder(source, length_, noise=False)
-            max_values, max_indices = torch.max(output, 2)
-            indices.append(
-                max_indices.view(output.size(0), -1).data.cpu().numpy())
+            code = autoencoder.encode(source)
+            max_indices = autoencoder.generate(code, length_)
+            indices.append(max_indices.data.cpu().numpy())
 
         for k, target_ in enumerate(target):
             # real sentence

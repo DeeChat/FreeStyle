@@ -103,7 +103,7 @@ def batchify(data, bsz, shuffle=False):
             y += padding
 
         source = torch.LongTensor(source)
-        target = torch.LongTensor(target).view(-1)
+        target = torch.LongTensor(target)
         # substract 1 for length embedding indexing
         lengths = torch.LongTensor([x - 1 for x in lengths])
 

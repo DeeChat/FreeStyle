@@ -5,8 +5,6 @@ import sys
 import random
 import logging
 import numpy as np
-import http.client
-import urllib
 from datetime import datetime
 
 import torch
@@ -15,13 +13,13 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from models import Seq2Seq
-from utils import Corpus, to_gpu, batchify
+from utils import Corpus, to_gpu, batchify, Dictionary
 
 '''
 TODO clear pushover
 Example Usage:
 (train)
-python train_ae.py --data_file chunks.json --dict_file vocab.txt --max_len 20 --outf ae --batch_size 64 --split 0.1 --log_interval 100 --cuda
+python train_ae.py --data_file chunks.json --dict_file vocab.txt --epochs 30 --max_len 20 --outf ae --batch_size 64 --split 0.1 --log_interval 100 --cuda
 (debug)
 python train_ae.py --data_file sample.json --dict_file vocab.txt --max_len 20 --outf ae --batch_size 2 --split 0.1 --log_interval 10
 '''
@@ -155,22 +153,9 @@ def main():
                 autoencoder.anneal()
 
         if args.split:
-            valid_loss, accuracy = autoencoder.evaluate(valid)
-            log.warn('Epoch {} valid loss: {} | acc: {}'.format(epoch, valid_loss, accuracy))
-            try:
-                conn = http.client.HTTPSConnection("api.pushover.net:443")
-                conn.request("POST", "/1/messages.json",
-                             urllib.parse.urlencode({
-                                 "token": "a1wbjvuu78kxj8i6yjjp7dbbhmgbvb",
-                                 "user": "u8fkm8ffskig2qx11ca14pd3zr7xf3",
-                                 "message": 'Epoch {} valid loss: {} | acc: {}'.format(epoch, valid_loss, accuracy),
-                             }), {"Content-type": "application/x-www-form-urlencoded"})
-                response = conn.getresponse()
-                if response.status != 200:
-                    log.warn('pushover message failed with code {}: {}'.format(response.status, response.reason))
-            except Exception as e:
-                pass
-
+            word_acc, sent_acc = autoencoder.evaluate(valid)
+            msg = 'Epoch {} word acc: {} | sent acc: {}'.format(epoch, word_acc, sent_acc)
+            log.warn(msg)
         autoencoder.save(out_dir, 'autoencoder_model_{}.pt'.format(epoch))
 
 
@@ -201,21 +186,13 @@ class AutoEncoder:
         target = to_gpu(args.cuda, Variable(target))
         length = to_gpu(args.cuda, Variable(length))
 
-        # Create sentence length mask over padding
-        mask = target.gt(0)
-        masked_target = target.masked_select(mask)
-        # examples x ntokens
-        output_mask = mask.unsqueeze(1).expand(mask.size(0), args.ntokens)
-
         # output: batch x seq_len x ntokens
         output = self.autoencoder(source, length, noise=True)
 
         # output_size: batch_size, maxlen, self.ntokens
         flattened_output = output.view(-1, args.ntokens)
 
-        masked_output = \
-            flattened_output.masked_select(output_mask).view(-1, args.ntokens)
-        loss = self.criterion(masked_output / args.temp, masked_target)
+        loss = self.criterion(flattened_output / args.temp, target.view(-1))
         loss.backward()
 
         # `clip_grad_norm` to prevent exploding gradient in RNNs / LSTMs
@@ -230,8 +207,8 @@ class AutoEncoder:
 
     def evaluate(self, valid):
         self.autoencoder.eval()
-        total_loss = []
-        all_accuracies = []
+        word_accuracies = []
+        sent_accuracies = []
 
         for i, batch in enumerate(valid):
             source, target, length = batch
@@ -239,25 +216,27 @@ class AutoEncoder:
             target = to_gpu(args.cuda, Variable(target, volatile=True))
             length = to_gpu(args.cuda, Variable(length, volatile=True))
 
-            mask = target.gt(0)
-            masked_target = target.masked_select(mask)
-            # examples x ntokens
-            output_mask = mask.unsqueeze(1).expand(mask.size(0), args.ntokens)
-
             # output: batch x seq_len x ntokens
-            output = self.autoencoder(source, length, noise=False)
-            flattened_output = output.view(-1, args.ntokens)
+            code = self.autoencoder.encode(source)
+            max_indices = self.autoencoder.generate(code, length).contiguous()
 
-            masked_output = \
-                flattened_output.masked_select(output_mask).view(-1, args.ntokens)
-            total_loss.append(self.criterion(masked_output / args.temp, masked_target).data.cpu().numpy()[0])
+            # ============word accuracy============
+            word_accuracies.extend(     # strip the last <eos>
+                max_indices.view(-1).eq(target[:, :-1].contiguous().view(-1)).data.cpu().tolist())
 
-            # accuracy
-            max_vals, max_indices = torch.max(masked_output, 1)
-            all_accuracies.append(
-                torch.mean(max_indices.eq(masked_target).float()).data[0])
+            # ==============generate examples==================
+            max_indices = max_indices.data.cpu().numpy()
+            target = target.data.cpu().numpy()
 
-        return np.mean(total_loss), np.mean(all_accuracies)
+            for t, idx in zip(target, max_indices):
+                # real sentence
+                real = [x for x in t if x >= Dictionary.offset]
+
+                # autoencoder output sentence
+                gen = [x for x in idx if x >= Dictionary.offset]
+                sent_accuracies.append(real == gen)
+
+        return np.mean(word_accuracies), np.mean(sent_accuracies)
 
     def save(self, dirname, filename):
         with open(os.path.join(dirname, filename), 'wb') as f:
