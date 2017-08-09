@@ -226,7 +226,7 @@ class Seq2Seq(nn.Module):
 
         return decoded
 
-    def generate(self, hidden, length, beam_size, vocab, sample=False, temp=1.0):
+    def generate(self, hidden, length, beam_size, vocab, ngenerations, sample=False, temp=1.0):
         """Generate through decoder; no backprop"""
         embed_len = self.embedding_length(length.unsqueeze(1))
         hidden = torch.cat([hidden,
@@ -249,11 +249,10 @@ class Seq2Seq(nn.Module):
         inputs = torch.cat([embedding, hidden.unsqueeze(1)], 2)
 
         # unroll
-        all_indices = []
+        all_indices = [[]]*ngenerations
         for i in range(torch.max(length.data)):
             output, state = self.decoder(inputs, state)
             overvocab = self.linear(output.squeeze(1))
-            sen_score = {}
 
             if not sample:
                 vals, indices = torch.topk(overvocab, beam_size, 1)
@@ -262,24 +261,20 @@ class Seq2Seq(nn.Module):
                 probs = F.softmax(overvocab / temp)
                 indices = torch.multinomial(probs, beam_size)
 
-            for index in range(beam_size):
-                string = all_indices.copy()
-                string.append(indices[:, index])
-                string = torch.cat(string, 1)
-                string = string.data.cpu().numpy()
-                string = [[vocab[x] for x in idx] for idx in string]
-                sen_score[index] = sum(score(x) for x in string)
+            indices = indices.data.cpu().numpy()
+            for index in range(indices):
+                sen_score = {}
+                for beam_index in range(beam_size):
+                    string = [vocab[x] for x in all_indices[index]] + [vocab[indices[index][beam_index]]]
+                    sen_score[indices[index][beam_index]] = score(string)
+                beam_index = sorted(sen_score.items(), key=lambda d:d[1], reverse=True)[0][0]
+                all_indices[index] += [beam_index]
 
-            index = sorted(sen_score.items(), key=lambda d:d[1], reverse=True)[0][0]
-            indices = indices[:, index]
-            all_indices.append(indices)
-
+            indices = Variable(all_indices)
             embedding = self.embedding_decoder(indices)
             inputs = torch.cat([embedding, hidden.unsqueeze(1)], 2)
 
-        max_indices = torch.cat(all_indices, 1)
-
-        return max_indices
+        return all_indices
 
 def load_ae(ae_args_file, ae_model, vocab_file):
     ae_args = json.load(open(ae_args_file, "r"))
@@ -335,14 +330,13 @@ def decode_idx(vocab, idx):
     return sent
 
 
-def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen, beam_size):
+def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen, beam_size, ngenerations):
     # autoencoder.eval()
     max_indices = autoencoder.generate(hidden=hidden,
                                        maxlen=maxlen,
                                        sample=sample,
                                        beam_size=beam_size,
                                        vocab=vocab)
-    max_indices = max_indices.data.cpu().numpy()
     sentences = []
     for idx in max_indices:
         # generated sentence
@@ -359,7 +353,7 @@ def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen, beam_size):
     return sentences
 
 
-def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen, beam_size):
+def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen, beam_size, ngenerations):
     """
     Assume inp is batch_size x max_sen_len
     """
@@ -372,9 +366,8 @@ def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen, beam_size):
                                        maxlen=maxlen,
                                        sample=sample,
                                        beam_size=beam_size,
-                                       vocab=vocab)
-
-    max_indices = max_indices.data.cpu().numpy()
+                                       vocab=vocab,
+                                       ngenerations=ngenerations)
     sentences = []
     for idx in max_indices:
         # generated sentence

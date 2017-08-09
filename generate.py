@@ -45,7 +45,8 @@ def main(args):
     source = Variable(source, volatile=True)
     sentences = generate(autoencoder, gan_gen, inp=source,
                          vocab=idx2word, sample=args.sample,
-                         maxlen=args.maxlen, beam_size=args.beam_size)
+                         maxlen=args.maxlen, beam_size=args.beam_size,
+                         ngenerations=args.ngenerations)
 
     if not args.noprint:
         print("\nSentence generations:\n")
