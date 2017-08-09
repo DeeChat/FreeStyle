@@ -6,6 +6,7 @@ import numpy as np
 
 from utils import to_gpu
 import json
+from ngram import score
 
 
 class MLP_D(nn.Module):
@@ -225,7 +226,7 @@ class Seq2Seq(nn.Module):
 
         return decoded
 
-    def generate(self, hidden, length, sample=False, temp=1.0):
+    def generate(self, hidden, length, beam_size, vocab, sample=False, temp=1.0):
         """Generate through decoder; no backprop"""
         embed_len = self.embedding_length(length.unsqueeze(1))
         hidden = torch.cat([hidden,
@@ -252,14 +253,28 @@ class Seq2Seq(nn.Module):
         for i in range(torch.max(length.data)):
             output, state = self.decoder(inputs, state)
             overvocab = self.linear(output.squeeze(1))
+            sen_score = {}
 
             if not sample:
-                vals, indices = torch.max(overvocab, 1)
+                    vals, indices = torch.topk(overvocab, beam_size, 1)
             else:
                 # sampling
                 probs = F.softmax(overvocab / temp)
-                indices = torch.multinomial(probs, 1)
+                indices = torch.multinomial(probs, beam_size)
 
+            for index in range(beam_size):
+                string = []
+                string = all_indices.copy()
+                string.append(torch.index_select(indices, 1, Variable(torch.LongTensor([index]))))
+                string = torch.cat(string, 1)
+                string = string.data.cpu().numpy()
+                string = [[vocab[x] for x in idx] for idx in string]
+                sen_score[index] = sum(score(x) for x in string)
+
+            print(sen_score)
+            index = sorted(sen_score.items(), key=lambda d:d[1], reverse=True)[0][0]
+            print(index)
+            indices = torch.index_select(indices, 1, Variable(torch.LongTensor([index])))
             all_indices.append(indices)
 
             embedding = self.embedding_decoder(indices)
@@ -268,7 +283,6 @@ class Seq2Seq(nn.Module):
         max_indices = torch.cat(all_indices, 1)
 
         return max_indices
-
 
 def load_ae(ae_args_file, ae_model, vocab_file):
     ae_args = json.load(open(ae_args_file, "r"))
@@ -324,11 +338,13 @@ def decode_idx(vocab, idx):
     return sent
 
 
-def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen):
+def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen, beam_size):
     # autoencoder.eval()
     max_indices = autoencoder.generate(hidden=hidden,
                                        maxlen=maxlen,
-                                       sample=sample)
+                                       sample=sample,
+                                       beam_size=beam_size,
+                                       vocab=vocab)
     max_indices = max_indices.data.cpu().numpy()
     sentences = []
     for idx in max_indices:
@@ -346,7 +362,7 @@ def generate_from_hidden(autoencoder, hidden, vocab, sample, maxlen):
     return sentences
 
 
-def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
+def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen, beam_size):
     """
     Assume inp is batch_size x max_sen_len
     """
@@ -357,7 +373,9 @@ def generate(autoencoder, gan_gen, inp, vocab, sample, maxlen):
     fake_hidden = gan_gen(autoencoder.encode(inp))
     max_indices = autoencoder.generate(hidden=fake_hidden,
                                        maxlen=maxlen,
-                                       sample=sample)
+                                       sample=sample,
+                                       beam_size=beam_size,
+                                       vocab=vocab)
 
     max_indices = max_indices.data.cpu().numpy()
     sentences = []

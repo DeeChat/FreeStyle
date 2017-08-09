@@ -45,7 +45,7 @@ def main(args):
     source = Variable(source, volatile=True)
     sentences = generate(autoencoder, gan_gen, inp=source,
                          vocab=idx2word, sample=args.sample,
-                         maxlen=args.maxlen)
+                         maxlen=args.maxlen, beam_size=args.beam_size)
 
     if not args.noprint:
         print("\nSentence generations:\n")
@@ -74,6 +74,7 @@ if __name__ == "__main__":
                         help='Number of sentences to generate')
     parser.add_argument('--data_path', type=str, required=True)
     parser.add_argument('--dict_file', type=str, required=True)
+    parser.add_argument('--beam_size', type=int, default=1)
     parser.add_argument('--outf', type=str, default='./generated.txt',
                         help='filename and path to write to')
     parser.add_argument('--noprint', action='store_true',
